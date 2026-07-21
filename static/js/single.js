@@ -347,7 +347,7 @@ function renderT3(meta) {
         el: cellInput(cm === "relative" ? "Urel_cert" : "U_abs", "number") },
       { label: "包含因子 k", el: cellInput("k_cert", "number") },
       { label: "移取量器", el: cellSelect(meta.pip_opts.map(s => ({ value: s, label: s })), "pip_vessel", v => { const nv = volStr(parseVesselNominal(v)); if (nv != null) S().scalars.pip_vol_actual = nv; renderT3(meta); }) },   // 选量器→自动填满刻度体积 + 刷新母液浓度
-      { label: "移取体积 (mL)", el: cellInput("pip_vol_actual", "number", v => { const s = volStr(v); if (s != null) S().scalars.pip_vol_actual = s; renderT3(meta); }) },   // 手输 → ≥0.01 保留 2 位小数 (volStr, 同量器联动/工作液列); 重渲回显 + 刷母液浓度/三者检查
+      { label: "移取体积 (mL)", el: cellInput("pip_vol_actual", "number", v => { const s = volStr(v); if (s != null) S().scalars.pip_vol_actual = s; renderT3(meta); }) },   // 手输 → volStr 修约(<1mL 保留 3 位 μL 精度); 重渲回显 + 刷母液浓度/三者检查
     ]));
     const pn = el("div"); pn.id = "stock-pip-note"; pn.className = "muted"; pn.style.cssText = "text-align:right;line-height:1.2;margin-top:.3rem;";
     sw.appendChild(pn);

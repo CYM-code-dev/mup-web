@@ -64,8 +64,8 @@ export function round_sf(x, n) {
 export function roundC(v) { return v == null || !isFinite(v) ? v : round_dp(v, Math.abs(v) < 0.1 ? 3 : 2); }
 // 浓度显示串(带尾零): <0.10→3 位小数 / ≥0.10→2 位小数 — 母液/目标浓度列 onSet 与 targetStr 共用
 export function concStr(v) { const n = Number(v); return isFinite(n) ? n.toFixed(Math.abs(n) < 0.1 ? 3 : 2) : null; }
-// 移取体积显示串: ≥0.01→2 位小数 (<0.01 返回 null, 保留原精度) — 量器联动/手输/onSet 共用
-export function volStr(v) { const n = Number(v); return isFinite(n) && n >= 0.01 ? round_dp(n, 2).toFixed(2) : null; }
+// 移取体积显示串: ≥1 mL→2 位 / 0.01≤v<1→3 位 (移液枪 μL 级精度, 如 0.177) / <0.01 返回 null 保留原精度 — 量器联动/手输/onSet 共用
+export function volStr(v) { const n = Number(v); if (!isFinite(n) || n < 0.01) return null; const dp = n < 1 ? 3 : 2; return round_dp(n, dp).toFixed(dp); }
 
 // 有效数字显示串: n 位有效数字 (银行家修约 round_sf + 补尾零, 展开科学计数)
 function sfStr(v, n) {

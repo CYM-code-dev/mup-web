@@ -861,7 +861,7 @@ function workChainCfg(meta, rows, onChange) {
       { key: "pip_vessel", type: "select", label: "移取量器", options: meta.pip_opts,
         onSet: r => { if (r.pip_vessel) { const s = volStr(parseVesselNominal(r.pip_vessel)); if (s != null) r.pip_vol = s; } } },   // 选量器 → 按标称体积自动填移取体积 (手改可覆盖)
       { key: "pip_vol", type: "number", label: "移取体积(mL)", step: "any",
-        onSet: r => { const s = volStr(r.pip_vol); if (s != null) r.pip_vol = s; } },   // 移取体积 ≥0.01 保留2位
+        onSet: r => { const s = volStr(r.pip_vol); if (s != null) r.pip_vol = s; } },   // 移取体积 volStr 修约(<1mL 保留 3 位 μL 精度)
       { key: "flask_vessel", type: "select", label: "定容量器", options: meta.flask_opts, seed: WORK_FLASK_DEFAULT },
       { key: "目标浓度(mg/L)", computed: r => targetStr(r["母液浓度(mg/L)"], r.pip_vol, parseVesselNominal(r.flask_vessel)) },
     ],
