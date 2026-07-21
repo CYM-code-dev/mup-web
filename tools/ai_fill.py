@@ -11,6 +11,14 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
+# 公司网络 SSL 拦截(自签 CA) → 让 Python 信任 Windows 证书库里的公司根证书。
+# truststore 未装则回退 certifi(开发机够用)。
+try:
+    import truststore
+    truststore.inject_into_ssl()
+except ImportError:
+    pass
+
 try:
     import tomllib  # py3.11+ 标准库
 except ModuleNotFoundError:  # pragma: no cover

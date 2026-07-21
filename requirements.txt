@@ -8,3 +8,4 @@ openpyxl
 Pillow
 requests
 ddddocr        # LIMS 验证码 OCR（lims_auto_login.py 懒加载；体积大，含 opencv/onnxruntime）
+truststore     # 让 urllib 信任 Windows 证书库 (公司 SSL 拦截自签 CA); 缺则回退 certifi

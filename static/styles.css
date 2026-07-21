@@ -1,5 +1,6 @@
 /* mup-web 主题 — 玻璃卡片 SaaS 派 (web-style 规范) */
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap');
+/* ponytail: 去掉 Google Fonts CDN 依赖——服务器环境访问不到 CDN 时 DM Sans 加载失败、
+   回退雅黑, 致观感和本机不一致; 统一用系统字体。要恢复 DM Sans 可把字体放进 static/fonts/ 改 @font-face。 */
 
 :root{
   --bg:#eef2ff; --panel:rgba(255,255,255,.72); --panel-solid:#fff;
