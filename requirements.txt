@@ -2,6 +2,7 @@
 # 如需跑 parity，额外: pip install pandas streamlit）
 fastapi
 uvicorn[standard]
+python-multipart   # FastAPI 文件上传 (UploadFile/File) 必需，FastAPI 不自带
 python-docx
 openpyxl
 Pillow
