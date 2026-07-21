@@ -262,7 +262,7 @@ function updateStockVsumNote(note) {
   else { note.className = "warn"; note.textContent = `ΣVi = ${vsum.toFixed(2)} mL  <  容量瓶 ${v} mL  ⚠ 少 ${(-diff).toFixed(2)} mL`; }
 }
 
-// 高浓液标: 移取量器 / 移取体积 / 储备液容量瓶 三者关系检查 (移取体积不得超量器满刻度, 亦不得超容量瓶)。
+// 高浓液标: 移取量器 / 移取体积 / 储备液容量瓶 三者关系检查 (移取体积不得超量器满刻度, 移液枪不得低于量程下限, 亦不得超容量瓶)。
 function updateStockPipNote(note) {
   note = note || document.getElementById("stock-pip-note"); if (!note) return;
   note.textContent = ""; note.style.color = "";
@@ -274,6 +274,7 @@ function updateStockPipNote(note) {
   const flask = parseFloat(s.stock_flask_s);
   const warns = [];
   if (nom && pv > nom + 1e-9) warns.push(`移取体积 ${pv} mL 超过 ${s.pip_vessel}(${nom} mL)`);
+  if (nom && s.pip_vessel.includes("移液枪") && pv < nom * 0.1 - 1e-9) warns.push(`移取体积 ${pv} mL 低于 ${s.pip_vessel} 量程下限 (${nom * 0.1} mL)`);
   if (isFinite(flask) && flask > 0 && pv > flask + 1e-9) warns.push(`移取体积 ${pv} mL 超过 储备液容量瓶 ${flask} mL`);
   if (warns.length) { note.textContent = "⚠ " + warns.join("；"); note.style.color = "#c00"; }
 }

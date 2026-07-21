@@ -84,7 +84,7 @@ export function scalarDefaultsMulti(B) {
     mu_vessel_kind: "", mu_vessel_vol_sel: "",
     mu_makeup_mode: "single", mu_blend_vk: "", mu_blend_vv: "", mu_blend_vuse: null, mu_blend_n: 2, mu_n_reag: 2,
     solvent_preset: "自定义", makeup_solvent_val: B.makeup_solvent ?? "", alpha_val: "",
-    mu_show_solid: true, mu_show_liquid: true,
+    mu_show_solid: false, mu_show_liquid: false,
     mu_solid_bal_mg: d, mu_solid_balance_id: "",
     mu_stock_makeup_mode: "single", mu_stock_solvent_preset: "自定义", mu_stock_solvent: B.makeup_solvent ?? "",
     mu_stock_alpha: "", mu_stock_reagents: [], mu_stock_blend_n: 2,

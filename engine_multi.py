@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 from uncertainty import (mup_cg248, BASELINE_PARAMS, UNIT_EXP, balance_mpe_g,  # noqa: E402
                          round_sf, round_dp, urel_stock_liquid, urel_mass,
                          urel_sample_volume)
-from engine_single import (KIND_LABELS, VOLUMES, _PIP_REV, _FLASK_REV,  # noqa: E402
+from engine_single import (KIND_LABELS, VOLUMES, _PIP_REV, _FLASK_REV, _resolve_pip,  # noqa: E402
                            _uses_from_ops, _is_na, _vessels_of, _vessel_echo,
                            _ai_fill_solvent)
 import solvents  # noqa: E402
@@ -47,7 +47,7 @@ def _analyte_work_uses(group, a):
     if not fd:
         return []
     _pv = fd.get("pip_vol")
-    if not (_pv and float(_pv) > 0 and fd.get("pip_vessel") in _PIP_REV):
+    if not (_pv and float(_pv) > 0 and _resolve_pip(fd.get("pip_vessel"))[0] is not None):
         return []
     dg = fd.get("dg")
     ops = [("pip", fd["pip_vessel"], float(_pv))]
@@ -56,7 +56,7 @@ def _analyte_work_uses(group, a):
         ops.append(("flask", fv, None))
     for step in (group.get("work") or {}).get(dg) or []:
         _sv = step.get("pip_vol")
-        if _sv and float(_sv) > 0 and step.get("pip_vessel") in _PIP_REV:
+        if _sv and float(_sv) > 0 and _resolve_pip(step.get("pip_vessel"))[0] is not None:
             ops.append(("pip", step["pip_vessel"], float(_sv)))
             if step.get("flask_vessel") in _FLASK_REV:
                 ops.append(("flask", step["flask_vessel"], None))
@@ -133,7 +133,7 @@ def _build_params(method, group, a):
         kc = a.get("k_cert") or group.get("k_cert")
         dg = a.get("ding_group") or "1"
         fl = group.get("flasks", {}).get(dg, {})
-        _pk, _pnom = _PIP_REV.get(fl.get("pip_vessel"), (None, None))   # 量器名→类型 (UI 只写 pip_vessel; 镜像 engine_single:228)
+        _pk, _pnom = _resolve_pip(fl.get("pip_vessel"))   # 量器名→类型 (UI 只写 pip_vessel; 镜像 engine_single:228)
         pip = (_pk or fl.get("pip_kind"), fl.get("pip_vol"))
         p["u_stock"], p["stock_detail"] = urel_stock_liquid(
             (a.get("Urel_cert") or 0.0) if cm == "relative" else 0.0,

@@ -349,7 +349,7 @@ function renderT3(meta) {
     c.appendChild(cl);
   }
   // 中间液及工作液
-  const cw = el("details", "card"); cw.open = S().mu_work_open !== false;
+  const cw = el("details", "card"); cw.open = S().mu_work_open === true;
   cw.addEventListener("toggle", () => { S().mu_work_open = cw.open; });
   const workSum = el("summary"); workSum.textContent = "中间液及工作液"; cw.append(workSum);
   const wchk = el("div"); wchk.style.cssText = "display:flex;gap:1.2rem;flex-wrap:wrap";
@@ -726,20 +726,23 @@ function liquidFolds(parent, meta) {
 // 渲染一块中间液/工作液 (源→中间液表 + 工作液链). feeds/flasks/work 由调用方传:
 //   固体 = grp_params[gn].inter(feeds/flasks) + .work;  液体 = 共享 ding[D](feeds/flasks/work)
 function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPrefix, gridIdPrefix) {
+  // feeds[src] 规范化为数组: 同一源可有多行移液记录; 兼容旧草稿的单对象结构
+  sources.forEach(src => {
+    const a = feeds[src];
+    if (!a) feeds[src] = [{ dg: `${dgPrefix}-中`, pip_vessel: null, pip_vol: null }];
+    else if (!Array.isArray(a)) feeds[src] = [a];
+    feeds[src].forEach(fd => { if (!fd.dg) fd.dg = `${dgPrefix}-中`; });
+  });
   const fold = el("div", "branch"); fold.append(cardTitle(title));
   if (sources.length) {
     const tbl = el("table", "grid");
     const thead = el("thead"); const trh = el("tr");
-    ["源", "中间液分组", "移液量器", "移取体积 (mL)", "中间液容量瓶"].forEach(t => { const th = el("th"); th.textContent = t; trh.appendChild(th); });
+    ["源", "中间液分组", "移液量器", "移取体积 (mL)", "中间液容量瓶", ""].forEach(t => { const th = el("th"); th.textContent = t; trh.appendChild(th); });
     thead.appendChild(trh); tbl.appendChild(thead);
     const tbody = el("tbody");
     // 按中间液分组(dg) 聚合源: 同 dg 排在一起 → 容量瓶合并为单一单元格; 组顺序=首次出现, 组内保源序
-    const ordered = sources.map(src => {
-      if (!feeds[src]) feeds[src] = { dg: `${dgPrefix}-中`, pip_vessel: null, pip_vol: null };
-      const fd = feeds[src];
-      if (!fd.dg) fd.dg = `${dgPrefix}-中`;   // 默认中间液分组名 = 前缀 + "-中"
-      return { src, fd };
-    });
+    // 同一源可有多行移液记录 (feeds[src] 为数组) → 展开后按 dg 聚合
+    const ordered = sources.flatMap(src => feeds[src].map(fd => ({ src, fd })));
     [...new Set(ordered.map(o => o.fd.dg))].forEach(dg => {
       const grp = ordered.filter(o => o.fd.dg === dg);
       grp.forEach(({ src, fd }, gi) => {
@@ -774,22 +777,40 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
         const tdDg = el("td"); tdDg.appendChild(dgInp);
         const tdPv = el("td"); tdPv.appendChild(pipSel);
         const tdVol = el("td"); tdVol.appendChild(pv);
-        if (gi === 0) {   // 组首行渲染容量瓶单元格, rowspan 跨整组 → 同 dg(含非连续)并入同一单元格
-          const tdFl = el("td"); tdFl.rowSpan = grp.length;
-          tdFl.appendChild(vesselSelect(meta, flasks[dg] || null, v => { flasks[dg] = v; re3(); }, "flask"));
-          tdFl.appendChild(interVsumNote(dg, grp, flasks));   // Σ移取体积 vs 容量瓶 (sum>flask → 装不下)
-          tr.append(tdSrc, tdDg, tdPv, tdVol, tdFl);
-        } else {
-          tr.append(tdSrc, tdDg, tdPv, tdVol);
-        }
+        // 容量瓶: 每行独立单元格 (不合并); 同 dg 共享 flasks[dg] → 改任一行同组全变; Σ笔记仅组首行
+        const tdFl = el("td");
+        tdFl.appendChild(vesselSelect(meta, flasks[dg] || null, v => { flasks[dg] = v; re3(); }, "flask"));
+        if (gi === 0) tdFl.appendChild(interVsumNote(dg, grp, flasks));   // Σ移取体积 vs 容量瓶 (sum>flask → 装不下)
+        // 删除按钮: 与工作液链一致 (row-del "−"); 仅剩一行时清空内容, 保留源可见
+        const tdAct = el("td");
+        const delBtn = el("button", "row-del"); delBtn.type = "button"; delBtn.textContent = "−";
+        delBtn.title = "删除该行 (仅剩一行时清空内容)";
+        delBtn.onclick = () => {
+          const arr = feeds[src];
+          if (arr.length <= 1) { arr[0].pip_vessel = null; arr[0].pip_vol = null; }
+          else { const i = arr.indexOf(fd); if (i >= 0) arr.splice(i, 1); }
+          re3();
+        };
+        tdAct.appendChild(delBtn);
+        tr.append(tdSrc, tdDg, tdPv, tdVol, tdFl, tdAct);
         tbody.appendChild(tr);
       });
     });
     tbl.appendChild(tbody); fold.appendChild(tbl);
+    // 新增行: 与工作液链一致 (row-add "+ 新增行"); 源与 dg 延续最后一行 (无则首源 + 默认 dg)
+    const addBtn = el("button", "row-add"); addBtn.type = "button"; addBtn.textContent = "+ 新增行";
+    addBtn.onclick = () => {
+      const last = ordered[ordered.length - 1];
+      const src = last ? last.src : sources[0];
+      const dg = (last && last.fd.dg) || `${dgPrefix}-中`;
+      feeds[src].push({ dg, pip_vessel: null, pip_vol: null });
+      re3();
+    };
+    fold.appendChild(addBtn);
   }
   // 工作液稀释链(每个中间液分组一条, 可多级); 容量瓶已在源表按中间液分组绑定
   // 工作液链按当前 sources 的 dg 渲染 (不扫全部 feeds → 改名/删行遗留的孤儿 feed 不再凭空多生一条链)
-  const interDgs = [...new Set(sources.map(src => feeds[src] && feeds[src].dg).filter(Boolean))];
+  const interDgs = [...new Set(sources.flatMap(src => feeds[src].map(fd => fd.dg)).filter(Boolean))];
   interDgs.forEach(dg => {
     const sub = el("div", "branch"); sub.style.marginTop = ".5rem";
     if (!work[dg]) work[dg] = [];
@@ -857,7 +878,7 @@ function targetStr(c, v, fnom) {
   if (c == null || v == null || !fnom) return null;
   return concStr(Number(c) * Number(v) / Number(fnom));
 }
-// 移取体积校验 → 标红 + tooltip (非阻塞): 单标吸量管须=标称; 分度吸量管/量筒等 ≤ 量程; 传 flaskVesselStr 则校验 移取体积≤定容量瓶(单步, 工作液链用)
+// 移取体积校验 → 标红 + tooltip (非阻塞): 单标吸量管须=标称; 移液枪须在量程档[满量程×10%, 满量程]; 分度吸量管/量筒等 ≤ 量程; 传 flaskVesselStr 则校验 移取体积≤定容量瓶(单步, 工作液链用)
 function syncPipOverflow(volInp, pipVesselStr, flaskVesselStr) {
   const v = parseFloat(volInp.value);
   let bad = false, msg = "";
@@ -866,6 +887,10 @@ function syncPipOverflow(volInp, pipVesselStr, flaskVesselStr) {
     if (pnom != null) {
       if (pipVesselStr.includes("单标吸量管")) {            // pip_s 单标线: 只能移取标称体积
         if (Math.abs(v - pnom) > 1e-9) { bad = true; msg = `单标吸量管须移取标称 ${pnom} mL`; }
+      } else if (pipVesselStr.includes("移液枪")) {          // pip_p 量程档: 下限=满量程×10%, 上限=满量程
+        const lo = pnom * 0.1;
+        if (v < lo - 1e-9) { bad = true; msg = `低于 ${pipVesselStr} 量程下限 (${lo} mL)`; }
+        else if (v > pnom + 1e-9) { bad = true; msg = `超出 ${pipVesselStr} 量程 (${pnom} mL)`; }
       } else if (v > pnom + 1e-9) { bad = true; msg = `超出 ${pipVesselStr} 量程 (${pnom} mL)`; }
     }
     if (!bad && flaskVesselStr) {                           // 单步定容: 移取体积 ≤ 定容量瓶

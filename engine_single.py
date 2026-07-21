@@ -21,7 +21,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 from uncertainty import (mup_cg248, GLASS_TOLERANCE, BASELINE_PARAMS, UNIT_EXP,  # noqa: E402
                          CONC_UNIT_EXP, balance_mpe_g, round_sf, round_dp,
-                         PIPETTE_TOL, PIPETTE_POINTS, pipette_cal_point, vessel_tol)
+                         PIPETTE_TOL, PIPETTE_RANGES, pipette_cal_point, vessel_tol)
 import solvents  # noqa: E402
 
 DEF = BASELINE_PARAMS
@@ -34,7 +34,7 @@ VOLUMES = {
     "pip_s":    [1, 2, 5, 10, 25, 50],
     "pip_g":    [1, 2, 5, 10, 20],
     "cylinder": [10, 50, 100, 250, 500, 1000],
-    "pip_p":    PIPETTE_POINTS,   # 移液枪校准点 (mL), 允差为体积百分比
+    "pip_p":    [nom for (_lo, _hi, nom) in PIPETTE_RANGES],   # 移液枪档满量程 nominal (mL), 允差按满量程
 }
 _USE_GRP = {"pip_s": 0, "pip_g": 1, "pip_p": 1, "flask": 2}
 # 分度吸量管分度值 (mL): 选量器时判 "V 是否为分度值整数倍 (可直读)" → 优先分度吸管, 否则移液枪
@@ -57,7 +57,10 @@ def _vol_label(kind, v):
 
 def _vsl_label(kind, v):
     if kind == "pip_p":
-        return f"{v:g} mL {KIND_LABELS[kind]}(±{PIPETTE_TOL[v] * 100:g}%)"   # 允差为体积百分比
+        rng = next((r for r in PIPETTE_RANGES if r[2] == v), None)   # (下限_μL, 满量程_μL, nominal)
+        if rng:
+            return f"{v:g} mL {KIND_LABELS[kind]} {rng[0]}-{rng[1]}μL(±{PIPETTE_TOL[v] * 100:g}%)"
+        return f"{v:g} mL {KIND_LABELS[kind]}(±{PIPETTE_TOL[v] * 100:g}%)"   # 历史 nominal 无对应档, 回退无范围串
     return f"{v:g} mL {KIND_LABELS[kind]}(±{GLASS_TOLERANCE[(kind, v)]:g})"
 
 
@@ -75,6 +78,33 @@ _PIP_OPTS, _PIP_REV = _vessel_opts(("pip_s", "pip_g", "pip_p"))
 _FLASK_OPTS, _FLASK_REV = _vessel_opts(("flask",))
 
 
+def _parse_leading_num(label):
+    """取选项串开头数字 (满量程 mL); 如 '0.02 mL 移液枪...' → 0.02。失败 → None。"""
+    s = str(label).lstrip()
+    i = 0
+    while i < len(s) and (s[i].isdigit() or s[i] == "."):
+        i += 1
+    return float(s[:i]) if i > 0 else None
+
+
+def _resolve_pip(label):
+    """移液枪选项串 → (kind, nominal); 兼容新档串与老校准点串; 非法 → (None, None)。
+
+    新串 '0.02 mL 移液枪 2-20μL(±4%)' 直接查 _PIP_REV; 老串 '0.025 mL 移液枪(±4%)'
+    (无范围段) → 按标称选 ≥它的档满量程, 避免被兜底误判成单标吸量管。
+    """
+    if not label:
+        return (None, None)
+    if label in _PIP_REV:
+        return _PIP_REV[label]
+    if "移液枪" in label:
+        nom = _parse_leading_num(label)
+        cp = pipette_cal_point(nom) if nom is not None else None
+        if cp is not None:
+            return ("pip_p", cp)
+    return (None, None)
+
+
 # ---- 稀释链 helper (逐字移植 app.py:129-235) ----
 def _uses_from_ops(ops):
     agg = {}
@@ -86,11 +116,10 @@ def _uses_from_ops(ops):
             else:
                 continue
         else:
-            if label and not _is_na(vol) and label in _PIP_REV:
-                k, nom = _PIP_REV[label]
-                key = (k, nom, float(vol))
-            else:
+            k, nom = _resolve_pip(label) if (label and not _is_na(vol)) else (None, None)
+            if k is None:
                 continue
+            key = (k, nom, float(vol))
         agg[key] = agg.get(key, 0) + 1
     uses = [(k, vused, n, vessel_tol(k, vused, nom), nom) for (k, nom, vused), n in agg.items()]
     uses.sort(key=lambda u: (_USE_GRP[u[0]], u[4], u[1]))
@@ -271,7 +300,7 @@ def build_params_single(state):
     else:
         cert_mode = S("cert_mode")
         stock_extra.update(cert_mode=cert_mode, k_cert=int(S("k_cert")))
-        _pk, _pnom = _PIP_REV.get(S("pip_vessel"), (None, None)) or ("pip_s", 5)
+        _pk, _pnom = _resolve_pip(S("pip_vessel")) or ("pip_s", 5)
         _pva = scalars.get("pip_vol_actual")
         if _is_na(_pva):
             _pva = float(_pnom)                          # 默认置满刻度 (single_form:1696)
