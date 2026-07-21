@@ -1,0 +1,9 @@
+# mup-web 运行时依赖（pandas/streamlit 仅 parity 回归测试用，不在此列；
+# 如需跑 parity，额外: pip install pandas streamlit）
+fastapi
+uvicorn[standard]
+python-docx
+openpyxl
+Pillow
+requests
+ddddocr        # LIMS 验证码 OCR（lims_auto_login.py 懒加载；体积大，含 opencv/onnxruntime）

@@ -1,0 +1,14 @@
+# AI 自动填充配置 —— OpenAI 兼容中转站接入信息
+#
+# 用法: 复制本文件为 ai_config.toml（同目录），填入真实值后即可。
+#       ai_config.toml 已加入 .gitignore，不会被提交，只存在本机。
+#       改完保存即生效（无需重启）。三项都要填，缺任一项侧边栏会提示「配置缺项」。
+
+# ① 接入地址 (base_url): 中转站「Base URL / 接入地址」，填到 /v1 这一级（含 /v1）。
+ai_base_url = "https://<中转站>/v1"
+
+# ② 模型名 (model): 中转站模型列表里的标识符，原样填（区分大小写，别用中文名）。
+ai_model = "glm-5-turbo"
+
+# ③ API 密钥 (api_key): 中转站「令牌 / API Keys」里生成的 sk-...
+ai_api_key = "sk-..."

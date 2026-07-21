@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>不确定度评估报告生成 (mup-web)</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="toolbar">
+    <div class="title-wrap">
+      <button id="btn-sidebar" class="tool" title="显示/隐藏侧栏">☰</button>
+      <h1>测量不确定度评估报告生成</h1>
+      <span id="draft-name" class="draft-name" title="当前草稿(星号=有未保存修改)"></span>
+    </div>
+    <div class="tools">
+      <button id="btn-drafts" class="tool" disabled>🗂 草稿 ▾</button>
+      <button id="btn-excel" class="tool" disabled title="多目标物用(Phase 3)">📁 Excel</button>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="side-mode">
+        <label><input type="radio" name="mode" value="single" checked> 单目标物</label>
+        <label><input type="radio" name="mode" value="multi"> 多目标物</label>
+      </div>
+      <nav class="tabs" id="tabs">
+        <button data-tab="t1" class="active">① 总述</button>
+        <button data-tab="t2">② 样品称量与定容</button>
+        <button data-tab="t3">③ 标准溶液</button>
+        <button data-tab="t4">④ 曲线拟合</button>
+        <button data-tab="t5">⑤ 精密度&amp;回收率</button>
+      </nav>
+      <div class="side-std">
+        <div id="side-std-lookup"></div>
+      </div>
+      <div class="meta-foot">
+        <div id="meta-model" title="式中：w—含量；C—样液浓度(mg/L)；V—定容体积(mL)；m—称样量(g)">测量模型：<b>w = C·V/m</b></div>
+        <span id="meta-status">加载中…</span>
+      </div>
+    </aside>
+
+    <main>
+      <section id="t1" class="tab active"></section>
+      <section id="t2" class="tab" hidden></section>
+      <section id="t3" class="tab" hidden></section>
+      <section id="t4" class="tab" hidden></section>
+      <section id="t5" class="tab" hidden></section>
+    </main>
+  </div>
+
+  <div class="action-bar">
+    <output id="calc-out" class="out"></output>
+    <button id="btn-calc-test">生成报告</button>
+    <button id="dl-md" class="dl" disabled>预览</button>
+    <button id="dl-docx" class="dl" disabled>下载 .docx</button>
+  </div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

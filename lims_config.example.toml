@@ -1,0 +1,9 @@
+# LIMS 自动登录凭据
+#
+# 用法: 复制本文件为 lims_config.toml（同目录），填入真实值。
+#       lims_config.toml 已加入 .gitignore，不会被提交，只存在本机。
+
+[lims]
+base_url = "http://<lims-host>:<port>"
+username = "<user>"
+password = "<password>"

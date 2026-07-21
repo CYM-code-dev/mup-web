@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+
+# 测试/构建缓存
+.pwtest/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# 本地索引/工具
+.codegraph/
+.claude/settings.local.json
+
+# 机密配置（本地填写，勿提交；模板见 *.example.toml）
+ai_config.toml
+lims_config.toml
+
+# 用户草稿（运行时生成；server.py 会在保存时自动 mkdir）
+drafts/
+
+# 运行日志
+logs/
+
+# OS/编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
