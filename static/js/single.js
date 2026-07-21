@@ -612,7 +612,7 @@ function spikeGridCfg(meta) {
     columns: [
       { key: "实测加标 C (mg/L)", type: "number", label: "实测加标 C (mg/L)", step: "any" },
       { key: "称样量 m (g)", type: "number", label: "称样量 m (g)", step: 0.0001 },
-      { key: "回收率 R", label: "回收率 R", computed: r => (r["实测加标 C (mg/L)"] != null && S().scalars.spike_theor) ? round_sf(r["实测加标 C (mg/L)"] / S().scalars.spike_theor, 3) : null },
+      { key: "回收率 R", label: "回收率 R", computed: r => (r["实测加标 C (mg/L)"] != null && S().scalars.spike_theor) ? round_sf(r["实测加标 C (mg/L)"] / S().scalars.spike_theor, 3) : null, format: v => resultStr(v, "有效数字", 3) },
       { key: "测定值 w", label: "测定值 w", computed: r => { const c = r["实测加标 C (mg/L)"], m = r["称样量 m (g)"]; return (c != null && m > 0) ? rnd(c * S().scalars.spike_vol / m * 10 ** exp, nd) : null; }, format: v => resultStr(v, rm, nd) },
     ],
     rows: S().editors.spike_df, dynamic: true, ctx: S(),
