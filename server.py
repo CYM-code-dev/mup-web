@@ -22,7 +22,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 from uncertainty import (mup_cg248, GLASS_TOLERANCE, BASELINE_PARAMS,  # noqa: E402
-                         UNIT_OPTIONS, UNIT_EXP, CONC_UNIT_OPTIONS, CONC_UNIT_EXP)
+                         UNIT_OPTIONS, UNIT_EXP, CONC_UNIT_OPTIONS, CONC_UNIT_EXP, PIPETTE_TOL)
 from gen_report import render, render_multi  # noqa: E402
 from engine_single import (build_params_single, KIND_LABELS, VOLUMES,  # noqa: E402
                            _PIP_OPTS, _FLASK_OPTS, apply_ai_single, apply_ai_method, apply_trace_single)
@@ -71,6 +71,7 @@ def _build(state):
 def meta_constants():
     return _resp({
         "glass_tolerance": {f"{k[0]}@{k[1]}": v for k, v in GLASS_TOLERANCE.items()},
+        "pipette_tol": {f"pip_p@{p}": f for p, f in PIPETTE_TOL.items()},   # 移液枪校准点允差 (分数)
         "baseline_params": BASELINE_PARAMS,
         "unit_options": list(UNIT_OPTIONS),
         "unit_exp": UNIT_EXP,

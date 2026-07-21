@@ -35,3 +35,12 @@ def get_credentials():
     if not (base_url and username and password):
         return None
     return base_url, username, password
+
+
+def get_std_backend_url():
+    """标准品管理后端地址(lims_config.toml [lims] std_backend_url)，供 mup-web 调溯源 API；
+    未配置返回 ''。"""
+    cfg = load_config()
+    if not cfg:
+        return ""
+    return str((cfg.get("lims") or {}).get("std_backend_url") or "").strip()

@@ -1,7 +1,7 @@
 // 中央状态 + 极简 pub/sub。路径用点号 (scalars.m_sample_raw / editors.work_df)。
 const S = {
   mode: "single", meta: {},
-  scalars: {}, rows: { reag: [], blend: [], stock_blend: [] },
+  scalars: {}, rows: { reag: [], blend: [], stock_blend: [], work_blend: [] },
   mu_rows: { blend: [], reag: [] },
   editors: { work_df: [], points_df: [], spike_df: [] },
   groups: {}, mu: {}, currentDraft: null,

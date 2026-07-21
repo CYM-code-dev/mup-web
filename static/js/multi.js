@@ -209,7 +209,7 @@ function muSampleVesselLeads(meta) {
     { header: "使用规格 (mL)", cell: vuse },
   ];
 }
-const MU_REAG_COUNT_KEY = { blend: "mu_blend_n", reag: "mu_n_reag", mu_stock_blend: "mu_stock_blend_n", mu_liq_stock_blend: "mu_liq_stock_blend_n" };
+const MU_REAG_COUNT_KEY = { blend: "mu_blend_n", reag: "mu_n_reag", mu_stock_blend: "mu_stock_blend_n", mu_liq_stock_blend: "mu_liq_stock_blend_n", mu_work_blend: "mu_work_blend_n" };
 function renderReagentTable(parent, prefix, meta) {
   const countKey = MU_REAG_COUNT_KEY[prefix];
   const rows = S().mu_rows[prefix] || (S().mu_rows[prefix] = []);
@@ -227,6 +227,7 @@ function renderReagentTable(parent, prefix, meta) {
       else if (prefix === "reag") { re3(); }   // 多次定容 → 触发储备液跟随
       else if (prefix === "mu_stock_blend") { S().scalars.mu_stock_blend_custom = true; computeMuBlendAlpha("mu_stock"); syncMuStockFlask(meta); re3(); }   // 固体储备液手改 → 锁 + 刷 α + 容量瓶跟随 ΣVi + 重渲(刷提示)
       else if (prefix === "mu_liq_stock_blend") { S().scalars.mu_liq_stock_blend_custom = true; computeMuBlendAlpha("mu_liq_stock"); re3(); }   // 液体储备液手改 → 锁 + 刷 α + 重渲
+      else if (prefix === "mu_work_blend") { computeMuBlendAlpha("mu_work"); re3(); }   // 工作液混合手改 → 刷 α(mu_work_alpha) + 重渲
     },
   });
 }
@@ -356,13 +357,7 @@ function renderT3(meta) {
   bindCheckbox(wchk, "工作液定容试剂与储备液一致", "mu_work_same_solvent", { on: re3 });
   cw.appendChild(wchk);
   if (!S().scalars.mu_work_same_solvent) {
-    const wg = el("div", "grid-3");
-    bindSelect(wg, "工作液定容试剂", "mu_work_solvent_preset",
-      [...meta.solvents.map(s => ({ value: s.name_cn, label: s.name_cn })), { value: "自定义", label: "自定义" }],
-      { on: v => { const sol = meta.solvents.find(s => s.name_cn === v); if (sol) { S().scalars.mu_work_solvent = sol.name_cn; S().scalars.mu_work_alpha = sol.alpha; } re3(); } });
-    bindInput(wg, "试剂名称", "mu_work_solvent");
-    bindInput(wg, "膨胀系数 α (1/℃)", "mu_work_alpha", { type: "number" });
-    cw.appendChild(wg);
+    stockReagentBlock(cw, meta, "mu_work", "工作液定容试剂");
   }
   interWork(cw, meta);
   c.appendChild(cw);
@@ -430,10 +425,10 @@ function syncMuStockFlask(meta) {
   });
 }
 // 储备液定容试剂 (单一/混合 → α; 全方法统一)。prefix=mu_stock(固)/mu_liq_stock(液)。
-function stockReagentBlock(parent, meta, prefix) {
+function stockReagentBlock(parent, meta, prefix, label = "储备液定容试剂") {
   const mk = el("div", "branch");
   const modeKey = prefix + "_makeup_mode";
-  bindRadio(mk, "储备液定容试剂", modeKey,
+  bindRadio(mk, label, modeKey,
     [{ value: "single", label: "单一溶剂" }, { value: "mixed", label: "混合试剂" }],
     { on: () => { S().scalars[prefix + "_blend_custom"] = true; renderT3(meta); } });
   if (S().scalars[modeKey] === "mixed") {

@@ -13,27 +13,32 @@ state 形状 (= 草稿 payload):
 import os
 import sys
 import math
+import re
 import time
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 from uncertainty import (mup_cg248, GLASS_TOLERANCE, BASELINE_PARAMS, UNIT_EXP,  # noqa: E402
-                         CONC_UNIT_EXP, balance_mpe_g, round_sf, round_dp)
+                         CONC_UNIT_EXP, balance_mpe_g, round_sf, round_dp,
+                         PIPETTE_TOL, PIPETTE_POINTS, pipette_cal_point, vessel_tol)
 import solvents  # noqa: E402
 
 DEF = BASELINE_PARAMS
 _MISSING = object()
 
 # ---- 量器常量 (与 app.py:36-81 一致; 前端 /api/meta 也用) ----
-KIND_LABELS = {"flask": "容量瓶(A)", "pip_s": "单标吸量管(A)", "pip_g": "分度吸量管(A)", "cylinder": "量筒（流出式）"}
+KIND_LABELS = {"flask": "容量瓶(A)", "pip_s": "单标吸量管(A)", "pip_g": "分度吸量管(A)", "cylinder": "量筒（流出式）", "pip_p": "移液枪"}
 VOLUMES = {
-    "flask":    [1, 2, 5, 10, 25, 50, 100, 250, 500, 1000],
+    "flask":    [1, 2, 5, 10, 25, 50, 100, 200, 250, 500, 1000],
     "pip_s":    [1, 2, 5, 10, 25, 50],
     "pip_g":    [1, 2, 5, 10, 20],
     "cylinder": [10, 50, 100, 250, 500, 1000],
+    "pip_p":    PIPETTE_POINTS,   # 移液枪校准点 (mL), 允差为体积百分比
 }
-_USE_GRP = {"pip_s": 0, "pip_g": 1, "flask": 2}
+_USE_GRP = {"pip_s": 0, "pip_g": 1, "pip_p": 1, "flask": 2}
+# 分度吸量管分度值 (mL): 选量器时判 "V 是否为分度值整数倍 (可直读)" → 优先分度吸管, 否则移液枪
+_PIP_G_SUB = {1: 0.01, 2: 0.02, 5: 0.05, 10: 0.1, 20: 0.1}
 _C_COL, _M_COL, _R_COL, _W_COL = "实测加标 C (mg/L)", "称样量 m (g)", "回收率 R", "测定值 w"
 
 
@@ -41,11 +46,18 @@ def _is_na(v):
     return v is None or v == "" or (isinstance(v, float) and v != v)
 
 
+def _on_graduation(vol, sub):
+    """vol 是否为分度值 sub 的整数倍 (可直读, 容差 1e-6 抗浮点)。"""
+    return sub > 0 and abs(vol / sub - round(vol / sub)) < 1e-6
+
+
 def _vol_label(kind, v):
     return f"{v} mL (±{GLASS_TOLERANCE[(kind, v)]:g})"
 
 
 def _vsl_label(kind, v):
+    if kind == "pip_p":
+        return f"{v:g} mL {KIND_LABELS[kind]}(±{PIPETTE_TOL[v] * 100:g}%)"   # 允差为体积百分比
     return f"{v:g} mL {KIND_LABELS[kind]}(±{GLASS_TOLERANCE[(kind, v)]:g})"
 
 
@@ -59,7 +71,7 @@ def _vessel_opts(kinds):
     return opts, rev
 
 
-_PIP_OPTS, _PIP_REV = _vessel_opts(("pip_s", "pip_g"))
+_PIP_OPTS, _PIP_REV = _vessel_opts(("pip_s", "pip_g", "pip_p"))
 _FLASK_OPTS, _FLASK_REV = _vessel_opts(("flask",))
 
 
@@ -80,7 +92,7 @@ def _uses_from_ops(ops):
             else:
                 continue
         agg[key] = agg.get(key, 0) + 1
-    uses = [(k, vused, n, GLASS_TOLERANCE[(k, nom)], nom) for (k, nom, vused), n in agg.items()]
+    uses = [(k, vused, n, vessel_tol(k, vused, nom), nom) for (k, nom, vused), n in agg.items()]
     uses.sort(key=lambda u: (_USE_GRP[u[0]], u[4], u[1]))
     return uses
 
@@ -90,7 +102,10 @@ def _dilution_to_uses(rows):
         return []
     ops = []
     for r in rows:
-        ops.append(("pip", r.get("移取量器"), r.get("移取体积(mL)")))
+        _pv = r.get("移取体积(mL)")
+        if _is_na(_pv) or float(_pv) <= 0:   # 移取 0 = 零点/空白, 非真实稀释步, 不计体积不确定度(仍作联动稀释链曲线点)
+            continue
+        ops.append(("pip", r.get("移取量器"), _pv))
         ops.append(("flask", r.get("定容量器"), None))
     return _uses_from_ops(ops)
 
@@ -289,7 +304,12 @@ def build_params_single(state):
         _stock_alpha = (sum(r["volume"] * r["alpha"] for r in stock_reagents) / _vtot) if _vtot else 0.0
     else:
         _stock_alpha = float(S("stock_alpha"))
-    work_alpha = _stock_alpha if scalars.get("work_same_solvent", True) else float(S("work_alpha"))
+    if scalars.get("work_same_solvent", True):
+        work_alpha = _stock_alpha
+    else:
+        _wr = rows.get("work_blend", []) or []
+        _wtot = sum(float(r.get("vi") or 0) for r in _wr)
+        work_alpha = (sum(float(r.get("vi") or 0) * float(r.get("a") or 0) for r in _wr) / _wtot) if _wtot else float(S("work_alpha"))
 
     # ④ 曲线点
     points, analyte_areas, is_areas, is_missing = [], [], [], 0
@@ -424,6 +444,13 @@ def _pick_vessel(kind, vol, allow_custom):   # app.py:537-576 逐字
         lab_ps, lab_pg, lab_cyl = VOLUMES["pip_s"], VOLUMES["pip_g"], VOLUMES["cylinder"]
         if any(abs(v - vol) < 1e-6 for v in lab_ps):
             v = int(round(vol)); return "pip_s", v, None, float(v), f"量器=单标吸量管, 规格={v:g} mL。"
+        if vol < 1.0:
+            # <1mL: 1mL分度吸量管(分度值0.01) 优先 —— V 为分度值整数倍(可直读)→分度吸管; 否则→移液枪
+            if _on_graduation(vol, _PIP_G_SUB[1]):
+                return "pip_g", 1, None, float(vol), f"量器=分度吸量管, 规格=1 mL(移取{vol:g}mL)。"
+            cp = pipette_cal_point(vol)
+            if cp is not None:
+                return "pip_p", cp, None, float(vol), f"量器=移液枪, 校准点={cp:g} mL(±{PIPETTE_TOL[cp] * 100:g}%)(移取{vol:g}mL)。"
         cand = [v for v in lab_pg if v >= vol]
         if cand:
             nom = min(cand); return "pip_g", nom, None, float(vol), f"量器=分度吸量管, 规格={nom:g} mL(移取{vol:g}mL)。"
@@ -684,6 +711,13 @@ def _pick_pip(vol):   # app.py:879-891
     lab_ps, lab_pg = VOLUMES["pip_s"], VOLUMES["pip_g"]
     if any(abs(v - vol) < 1e-6 for v in lab_ps):
         return "pip_s", int(round(vol))
+    if vol < 1.0:
+        # <1mL: V 为 1mL分度吸量管分度值(0.01)整数倍 → 分度吸管; 否则 → 移液枪
+        if _on_graduation(vol, _PIP_G_SUB[1]):
+            return "pip_g", 1
+        cp = pipette_cal_point(vol)
+        if cp is not None:
+            return "pip_p", cp
     cand = [v for v in lab_pg if v >= vol]
     if cand:
         return "pip_g", min(cand)
@@ -694,23 +728,90 @@ def _conc_text(v):
     return None if v is None else (f"{v:.3f}" if abs(v) < 0.1 else f"{v:.2f}")
 
 
+def _resolve_serial(flag, ds):
+    """判定工作液是否「逐级稀释」。浓度比推断为主(复刻源项目 bbcdDetectGradualMode);
+    diluteStatus 标志仅采信显式 False —— True 不可信(源 UI checkbox 默认勾选, 用户常未改)。
+    目标浓度缺失/全0(推不出) → 默认非逐级: 多点系列常见并行配制, 且源此时 mother_conc 已链式塌缩不可用。
+
+    逐级: target[i] ≈ mother_conc[i]·pip/flask (mother 链式=上行目标);
+    非逐级: target[i] ≈ stock_conc·pip/flask (各行均从储备液取)。"""
+    if flag in (False, "false", "False", 0):
+        return False
+    rows = (ds or {}).get("rows") or []
+    stock_conc = (ds or {}).get("stock_conc")
+    pts = [(r.get("target_conc"), r.get("pip_vol"), r.get("flask_vol"), r.get("mother_conc")) for r in rows]
+    if stock_conc and all(t and p and fl for t, p, fl, _m in pts):
+        tol = 0.05   # 2 位有效数字显示取整上界(D-9159 末步 0.104→0.1 达 4%); flat 对链式行差数量级, 放宽不误判
+        serial_ok = all(abs(t - m * p / fl) <= tol * t for t, p, fl, m in pts)
+        flat_ok = all(abs(t - stock_conc * p / fl) <= tol * t for t, p, fl, _m in pts)
+        if serial_ok != flat_ok:   # 恰好一个成立才能区分
+            return serial_ok
+    return False
+
+
+def _vol_str(v):
+    """移取体积格式：≥0.01 保留两位小数(串)；其余原值。(同前端 util.js volStr)"""
+    try:
+        n = float(v)
+    except (TypeError, ValueError):
+        return v
+    return f"{n:.2f}" if n >= 0.01 else v
+
+
+def _parse_mix_medium(med):
+    """解析定容介质串 → [(name_cn, ratio, alpha), ...] (按介质中出现顺序); 解不出任何溶剂返回 None。
+    反向匹配: 遍历溶剂库看 name_cn 是否为介质子串(避免 lookup(整串) 对 '丙酮:甲醇=1:1' 因串太长返回空);
+    配比取 '=' 或 '((' 后的数字串, 个数与组分数相等时用之, 否则等比(1.0)。
+    '丙酮:甲醇=1:1'→[(丙酮,1,...),(甲醇,1,...)]; '甲醇'→[(甲醇,1,...)]; '无水乙酸乙酯'→[(乙酸乙酯,1,...)]。"""
+    if not med or not str(med).strip():
+        return None
+    s = str(med).strip()
+    name_region = re.split(r"[=（(]", s, 1)[0]
+    suffix = s[len(name_region):]
+    comps = []
+    for sol in solvents.SOLVENT_DB:
+        cn = sol.get("name_cn", "")
+        if cn and cn in name_region:
+            comps.append((name_region.find(cn), sol))
+    comps.sort(key=lambda t: t[0])
+    comps = [sol for _, sol in comps]
+    if not comps:
+        return None
+    nums = re.findall(r"\d+(?:\.\d+)?", suffix)
+    n = len(comps)
+    ratios = [float(x) for x in nums] if len(nums) == n else [1.0] * n
+    return [(sol["name_cn"], ratios[i], sol["alpha"]) for i, sol in enumerate(comps)]
+
+
 def apply_trace_single(code):   # app.py:_apply_trace_single 899-1001, 去 st.*
     code = (code or "").strip()
     if not code:
         return {"error": "请输入工作液编号(如 D-9203)。"}
-    system, err = _lims_session_cached()
-    if err:
-        return {"error": err}
+    # 调用标准品管理后端溯源 API（服务账号 OCR 登录、追溯到 A 级 CRM + 台账不确定度），
+    # 替换原先直连 LIMS 的 trace_working_solution；返回原始链 + crm，映射仍在本函数完成。
+    import requests
+    from lims_config import get_std_backend_url
+    from lims_fill import extract_chain_fields
+    backend = get_std_backend_url()
+    if not backend:
+        return {"error": "未配置标准品管理后端(lims_config.toml: std_backend_url)"}
     try:
-        from lims_trace import trace_working_solution
-        from lims_fill import extract_chain_fields
-        chain = trace_working_solution(code, system)
-        fields = extract_chain_fields(chain)
+        resp = requests.get(f"{backend}/api/lims/trace_working_solution",
+                            params={"code": code}, timeout=30)
+        resp.raise_for_status()
+        body = resp.json()
+    except Exception as e:
+        return {"error": f"溯源请求失败: {e}"}
+    if not body.get("success"):
+        return {"error": body.get("message") or "溯源失败"}
+    d = body.get("data") or {}
+    if not d.get("chain"):
+        return {"error": "未找到该工作液的溯源链"}
+    try:
+        fields = extract_chain_fields(d["chain"])
     except ValueError as e:
         return {"error": str(e)}
-    except Exception as e:
-        _LIMS_SESS["res"] = None   # 疑似会话过期, 清缓存
-        return {"error": f"溯源失败: {e}"}
+    crm = d.get("crm") or {}
 
     sc, work, fb = {}, [], {"errors": [], "filled": [], "notes": [], "manual": [], "chain": ""}
     fb["manual"] = list(fields["manual"])
@@ -722,6 +823,25 @@ def apply_trace_single(code):   # app.py:_apply_trace_single 899-1001, 去 st.*
     if fields["stock_source"] == "solid":
         if fields["m_std"] is not None:
             sc["m_std"] = fields["m_std"]; fb["filled"].append(f"m_std={fields['m_std']:g} g")
+        # 标准溶液 urel(C) 模块：纯度/U(p)/k（原列在 manual，现由台账 CRM 自动填充）
+        _done = set()
+        if crm.get("purity") is not None:
+            sc["purity"] = crm["purity"]; fb["filled"].append(f"纯度 p={crm['purity']:g}"); _done.add("标准品纯度 p")
+        if crm.get("u_value") is not None:
+            sc["U_purity"] = crm["u_value"]; fb["filled"].append(f"U(p)={crm['u_value']:g}"); _done.add("纯度扩展不确定度 U(p)")
+        if crm.get("k_value") is not None:
+            sc["k_purity"] = crm["k_value"]; fb["filled"].append(f"k={crm['k_value']:g}"); _done.add("纯度包含因子 k")
+        if _done:
+            fb["manual"] = [m for m in fb["manual"] if m not in _done]
+        # 天平设备编号（称量型 B 记录的配置设备；已知天平 → 示值允差 0.5 mg，同 single.js:131 BAL_IDS 约定）
+        bal = d.get("balance") or {}
+        if bal.get("id"):
+            sc["stock_balance_id"] = bal["id"]
+            if bal["id"] in ("CK-SB294-CG", "CK-SB295-CG", "CK-SB005-CG", "CK-SB030-FCM", "CK-SB032-EN"):
+                sc["stock_balance_tol_mg"] = 0.5
+            fb["filled"].append(f"天平={bal['id']}")
+        else:
+            fb["manual"].append("天平设备编号")   # 称量型 B 记录 deviceNames 未录(LIMS 数据缺口)，显式提示手补
     else:
         if fields["c_cert"] is not None:
             sc["C_cert"] = fields["c_cert"]; sc["C_cert_unit"] = "mg/L"
@@ -732,6 +852,14 @@ def apply_trace_single(code):   # app.py:_apply_trace_single 899-1001, 去 st.*
             if _ps is not None:
                 sc["pip_vessel"] = _vsl_label(_pk, _ps)
             fb["filled"].append(f"移取浓标={fields['stock_received_qty']:g} mL")
+        # 证书 U/k（原列在 manual，现由台账 CRM 自动填充）
+        _done = set()
+        if crm.get("u_value") is not None:
+            sc["U_abs"] = crm["u_value"]; _done.add("证书扩展不确定度 U")
+        if crm.get("k_value") is not None:
+            sc["k_cert"] = crm["k_value"]; _done.add("证书包含因子 k")
+        if _done:
+            fb["manual"] = [m for m in fb["manual"] if m not in _done]
     if fields["stock_flask_vol"] is not None:
         _fk, _fs, _c, _a, _m = _pick_vessel("flask", fields["stock_flask_vol"], allow_custom=False)
         if _fs is not None:
@@ -746,27 +874,91 @@ def apply_trace_single(code):   # app.py:_apply_trace_single 899-1001, 去 st.*
         else:
             sc["stock_solvent_preset"] = "自定义"; sc["stock_solvent"] = med
             fb["notes"].append(f"储备液定容试剂「{med}」不在溶剂库, α 待手填。")
-    sc["work_same_solvent"] = True
+    # 工作液(链底 chain[-1]=输入的工作液)定容介质 vs 储备液(链顶 chain[0])介质;
+    # 不一致 → 取消"工作液试剂与储备液一致"勾选, 解析工作液介质填 work_blend 表格(单一1行/混合多行)
+    rows_out = {}
+    _ch = d.get("chain") or []
+    _stock_med = (fields.get("stock_medium") or "").strip()
+    _work_med = (str(_ch[-1].get("medium") or "")).strip() if _ch else ""
+    if _work_med and _stock_med and _work_med != _stock_med:
+        sc["work_same_solvent"] = False
+        _mix = _parse_mix_medium(_work_med)
+        if _mix:
+            _tot = sum(r for _, r, _ in _mix) or 1.0
+            rows_out["work_blend"] = [{"s": nm, "vi": round(10.0 * rt / _tot, 2), "a": al} for nm, rt, al in _mix]
+            sc["work_makeup_mode"] = "mixed" if len(_mix) >= 2 else "single"
+            fb["filled"].append(f"工作液定容试剂={_work_med}({'混合' if len(_mix) >= 2 else '单一'}自动填充)")
+        else:
+            sc["work_makeup_mode"] = "single"
+            fb["notes"].append(f"工作液定容试剂「{_work_med}」与储备液不一致且未解析出溶剂, 请手动填写工作液试剂表格。")
+    else:
+        sc["work_same_solvent"] = True
 
-    for r in fields["dilution_rows"]:
-        pk_lab = fk_lab = None
-        if r["pip_vol"] is not None:
-            _pk, _ps = _pick_pip(r["pip_vol"])
-            if _ps is not None:
-                pk_lab = _vsl_label(_pk, _ps)
-        if r["flask_vol"] is not None:
-            _fk, _fs, _c, _a, _m = _pick_vessel("flask", r["flask_vol"], allow_custom=False)
-            if _fs is not None:
-                fk_lab = _vsl_label("flask", _fs)
-        work.append({"母液浓度(mg/L)": _conc_text(r["mother_conc"]), "移取体积(mL)": r["pip_vol"],
-                     "移取量器": pk_lab, "定容量器": fk_lab, "目标浓度(mg/L)": None})
+    ds = d.get("dilution_series")
+    if ds and len(ds.get("rows", [])) >= 2:
+        # 多点工作液：逐级与否优先读 diluteStatus 标志(chain[-1]), 缺失则浓度比推断;
+        # 非逐级时各行母液=储备液浓度(均从储备液取), 否则前端非逐级显示会带上行链式母液浓度, 与勾选状态矛盾
+        _serial = _resolve_serial((_ch[-1].get("diluteStatus") if _ch else None), ds)
+        sc["work_serial_dilute"] = _serial
+        _stock_c = ds.get("stock_conc")
+        for row in ds["rows"]:
+            _pv = row.get("pip_vol")
+            _pk, _ps = (_pick_pip(_pv) if _pv is not None else (None, None))
+            pk_lab = _vsl_label(_pk, _ps) if _ps is not None else None
+            _fk, _fs, _c, _a, _m = _pick_vessel("flask", row.get("flask_vol"), allow_custom=False)
+            fk_lab = _vsl_label("flask", _fs) if _fs is not None else None
+            _mother = _stock_c if (not _serial and _stock_c is not None) else row["mother_conc"]
+            work.append({"母液浓度(mg/L)": _conc_text(_mother), "移取体积(mL)": _vol_str(_pv),
+                         "移取量器": pk_lab, "定容量器": fk_lab, "目标浓度(mg/L)": None})
+    else:
+        for r in fields["dilution_rows"]:
+            pk_lab = fk_lab = None
+            if r["pip_vol"] is not None:
+                _pk, _ps = _pick_pip(r["pip_vol"])
+                if _ps is not None:
+                    pk_lab = _vsl_label(_pk, _ps)
+            if r["flask_vol"] is not None:
+                _fk, _fs, _c, _a, _m = _pick_vessel("flask", r["flask_vol"], allow_custom=False)
+                if _fs is not None:
+                    fk_lab = _vsl_label("flask", _fs)
+            work.append({"母液浓度(mg/L)": _conc_text(r["mother_conc"]), "移取体积(mL)": _vol_str(r["pip_vol"]),
+                         "移取量器": pk_lab, "定容量器": fk_lab, "目标浓度(mg/L)": None})
     if work:
         fb["filled"].append(f"稀释链 {len(work)} 步")
     fb["chain"] = " → ".join(f"{lv}({od})" for lv, od, _n, _c, _d in fields["info_chain"] if od)
-    return {"scalars": sc, "work_df": work, "feedback": fb}
+    return {"scalars": sc, "rows": rows_out, "work_df": work, "feedback": fb}
+
+
+def _selfcheck_serial():
+    """_resolve_serial 自检: 有效目标→浓度比推断; 目标全0/缺失→默认非逐级; 显式False标志采信、True不采信。"""
+    serial_ds = {"stock_conc": 1000.0, "rows": [
+        {"mother_conc": 1000.0, "target_conc": 100.0, "pip_vol": 1.0, "flask_vol": 10.0},
+        {"mother_conc": 100.0, "target_conc": 10.0, "pip_vol": 1.0, "flask_vol": 10.0}]}
+    flat_ds = {"stock_conc": 1000.0, "rows": [
+        {"mother_conc": 1000.0, "target_conc": 100.0, "pip_vol": 1.0, "flask_vol": 10.0},
+        {"mother_conc": 100.0, "target_conc": 100.0, "pip_vol": 1.0, "flask_vol": 10.0}]}
+    zero_ds = {"stock_conc": 10.0, "rows": [   # D-9230 实形: 目标浓度全0(源未录入) → 默认非逐级
+        {"mother_conc": 10.0, "target_conc": 0.0, "pip_vol": 1.0, "flask_vol": 25.0},
+        {"mother_conc": 0.0, "target_conc": 0.0, "pip_vol": 2.5, "flask_vol": 25.0}]}
+    d9159_ds = {"stock_conc": 1155.96, "rows": [   # D-9159 实形: 真逐级6步链, 末两步显示取整(0.104→0.1)
+        {"mother_conc": 1155.96, "target_conc": 10.4, "pip_vol": 0.09, "flask_vol": 10.0},
+        {"mother_conc": 10.4, "target_conc": 5.2, "pip_vol": 2.5, "flask_vol": 5.0},
+        {"mother_conc": 5.2, "target_conc": 1.04, "pip_vol": 2.0, "flask_vol": 10.0},
+        {"mother_conc": 1.04, "target_conc": 0.52, "pip_vol": 5.0, "flask_vol": 10.0},
+        {"mother_conc": 0.52, "target_conc": 0.1, "pip_vol": 2.0, "flask_vol": 10.0},
+        {"mother_conc": 0.1, "target_conc": 0.052, "pip_vol": 5.0, "flask_vol": 10.0}]}
+    assert _resolve_serial(None, serial_ds) is True, "有效目标→逐级判 True"
+    assert _resolve_serial(None, flat_ds) is False, "有效目标→非逐级判 False"
+    assert _resolve_serial(None, zero_ds) is False, "目标全0→默认非逐级"
+    assert _resolve_serial(True, d9159_ds) is True, "D-9159 真逐级链(末步显示取整)→逐级"
+    assert _resolve_serial(None, {"stock_conc": 1000.0, "rows": []}) is False, "空系列→默认非逐级"
+    assert _resolve_serial(True, flat_ds) is False, "标志 True 不采信→按数据判非逐级"
+    assert _resolve_serial(False, serial_ds) is False, "显式 False 标志→非逐级"
+    print("_resolve_serial self-check OK")
 
 
 if __name__ == "__main__":
+    _selfcheck_serial()
     import json
     with open(os.path.join(ROOT, "drafts", "111.json"), encoding="utf-8") as fp:
         st = json.load(fp)

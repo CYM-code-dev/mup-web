@@ -16,7 +16,7 @@ import sys
 from decimal import Decimal, ROUND_CEILING
 
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
-from uncertainty import mup_cg248, recovery, GLASS_TOLERANCE, _GRADUATED, round_sf, fmt_result  # noqa: E402
+from uncertainty import mup_cg248, recovery, GLASS_TOLERANCE, _GRADUATED, round_sf, fmt_result, vessel_tol  # noqa: E402
 
 
 def _f(x, nd=4):
@@ -68,10 +68,10 @@ def _sci_l(x):
 
 
 # 量器类型代码 → 中文名 (4.2 定容描述用)
-KIND_CN = {"flask": "容量瓶", "pip_s": "单标线吸量管", "pip_g": "分度吸量管", "cylinder": "量筒"}
+KIND_CN = {"flask": "容量瓶", "pip_s": "单标线吸量管", "pip_g": "分度吸量管", "cylinder": "量筒", "pip_p": "移液枪"}
 
 # 4.3.2 稀释流程表量器名 (模板/分析师口径): 单标/刻度移液管, 容量瓶, 量筒
-_FLOW_VESSEL = {"flask": "容量瓶", "pip_s": "单标移液管", "pip_g": "刻度移液管", "cylinder": "量筒"}
+_FLOW_VESSEL = {"flask": "容量瓶", "pip_s": "单标移液管", "pip_g": "刻度移液管", "cylinder": "量筒", "pip_p": "移液枪"}
 
 
 def _work_flow_rows(method):
@@ -324,9 +324,11 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1"):
     Urel = method.get("Urel_cert", 0.0)
     pk = method["pip_kind"]
     pv = float(method["pip_vol"])                          # 实际移取体积 (允差项除数)
-    pnom = int(method.get("pip_nominal", pv))              # 量器规格 (查允差; 满刻度时=pv)
+    pnom = method.get("pip_nominal", pv)                   # 量器规格 (查允差; 满刻度时=pv); pip_p=校准点(可为分数 mL)
+    if pk != "pip_p":
+        pnom = int(pnom)
     fv = int(method["stock_flask_volume"])
-    tol_p = GLASS_TOLERANCE[(pk, pnom)]                    # 移取浓标吸量管允差 (按量器规格)
+    tol_p = vessel_tol(pk, pv, pnom)                       # 移取浓标吸量管允差 (pip_p=PIPETTE_TOL[校准点]·pv)
     k_pip = sq(3) if pk in _GRADUATED else sq(6)            # 分度吸量管/量筒 √3 / 单标吸量管 √6
     ksym_p = "\\sqrt{3}" if pk in _GRADUATED else "\\sqrt{6}"
     dist_p = "均匀分布（k=√3）" if pk in _GRADUATED else "三角分布（k=√6）"
@@ -510,7 +512,7 @@ def _sec4_2_volume(method, r):
         md = r["makeup_detail"]; per = md["per"]
         V = md["V"]; blend_alpha = md["blend_alpha"]
         vk = method["vessel_kind"]; vv = method["vessel_volume"]
-        tol = GLASS_TOLERANCE[(vk, vv)]
+        tol = vessel_tol(vk, vv)
         kind_cn = KIND_CN.get(vk, vk)
         is_grad = (vk in _GRADUATED)
         k_ml = sq(3) if is_grad else sq(6)
@@ -587,7 +589,7 @@ def _sec4_2_volume(method, r):
         v_used = method.get("vessel_used_volume", vv)   # 实际定容体积 (满刻度默认=规格)
         tol = method.get("vessel_tol")
         if tol is None:
-            tol = GLASS_TOLERANCE[(vk, vv)]              # 允差按量器规格查 JJG 196 (无手填允差时查表)
+            tol = vessel_tol(vk, vv)              # 允差按量器规格查 JJG 196 (无手填允差时查表)
         alpha = r.get("alpha", 1.19e-3)
         solvent = method.get("makeup_solvent", "")
         kind_cn = KIND_CN.get(vk, vk)
@@ -760,7 +762,8 @@ def render(method, r):
         A("其中允差按量器类型取分布（容量瓶/单标线吸量管三角分布√6，分度吸量管均匀分布√3）；"
           f"温度项 $u_{{rel}}(V_\\tau)=\\alpha\\cdot\\Delta\\tau/\\sqrt{{3}}$，"
           f"中间液及工作液定容试剂膨胀系数 $\\alpha={_sci_l(r.get('work_alpha', r.get('alpha', 1.19e-3)))}$/℃；"
-          "分度吸量管非满刻度使用时，允差按标称规格查表、体积按实际移取量计入。"
+          "分度吸量管非满刻度使用时，允差按标称规格查表、体积按实际移取量计入；"
+          "移液枪允差为移取体积的百分比、按≥V 的校准点取值，按均匀分布√3计入。"
           "单器一次使用 $u_{rel}(V)=\\sqrt{u_{rel}(V_容)^{2}+u_{rel}(V_\\tau)^{2}}$，"
           "多级稀释按方和根合成：")
         A("$$ u_{rel}(C_{work}) = \\sqrt{\\sum n_i \\cdot u_{rel}(V_i)^{2}} = " + _f(r["u_work"]) + " $$")
@@ -1098,7 +1101,8 @@ def render_multi(method, groups, analytes, results):
             A("其中允差按量器类型取分布（容量瓶/单标线吸量管三角分布√6，分度吸量管均匀分布√3）；"
               f"温度项 $u_{{rel}}(V_\\tau)=\\alpha\\cdot\\Delta\\tau/\\sqrt{{3}}$，"
               f"工作液定容试剂膨胀系数 $\\alpha={_sci_l(rg.get('work_alpha', rg.get('alpha', 1.19e-3)))}$/℃；"
-              "分度吸量管非满刻度使用时，允差按标称规格查表、体积按实际移取量计入。"
+              "分度吸量管非满刻度使用时，允差按标称规格查表、体积按实际移取量计入；"
+              "移液枪允差为移取体积的百分比、按≥V 的校准点取值，按均匀分布√3计入。"
               "单器一次使用 $u_{rel}(V)=\\sqrt{u_{rel}(V_容)^{2}+u_{rel}(V_\\tau)^{2}}$，"
               "多级稀释按方和根合成：")
             if _same:

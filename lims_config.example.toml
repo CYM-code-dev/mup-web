@@ -7,3 +7,5 @@
 base_url = "http://<lims-host>:<port>"
 username = "<user>"
 password = "<password>"
+# 标准品管理后端(Flask, 端口 5000)，供 mup-web 溯源填充调用 /api/lims/trace_working_solution
+std_backend_url = "http://127.0.0.1:5000"

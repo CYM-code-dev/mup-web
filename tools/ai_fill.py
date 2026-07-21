@@ -98,6 +98,7 @@ _KIND_ALIASES = {
     "flask": "flask", "容量瓶": "flask", "量瓶": "flask", "volumetric": "flask", "volumetricflask": "flask",
     "pip_s": "pip_s", "单标": "pip_s", "单标线": "pip_s", "单标吸量管": "pip_s", "移液管": "pip_s", "pipette": "pip_s",
     "pip_g": "pip_g", "分度": "pip_g", "刻度": "pip_g", "分度吸量管": "pip_g", "刻度吸量管": "pip_g",
+    "pip_p": "pip_p", "移液枪": "pip_p", "移液器": "pip_p", "可调移液器": "pip_p", "微量移液器": "pip_p",
 }
 
 

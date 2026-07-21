@@ -26,7 +26,7 @@ export function scalarDefaults(B) {
     cert_mode: "relative", k_cert: 2, Urel_cert: "", C_cert: 100.0, C_cert_unit: "mg/L", U_abs: 5.1,
     pip_vessel: pipVesselDefault, pip_vol_actual: "",
     stock_makeup_mode: "single", stock_solvent_preset: "自定义", stock_solvent: B.stock_solvent ?? "", stock_alpha: "", stbl_n: 2,
-    work_same_solvent: true, work_alpha: "", work_serial_dilute: true,
+    work_same_solvent: true, work_makeup_mode: "single", work_alpha: "", work_serial_dilute: true, wbl_n: 2,
     spike_std_conc: "", spike_add_vol: "", spike_vol: "",
     spike_theor: "",
     spike_add_mass: "",
@@ -46,6 +46,7 @@ export function applySingle(payload, S) {
     reag: (d.rows && d.rows.reag) || [],
     blend: (d.rows && d.rows.blend) || [],
     stock_blend: (d.rows && d.rows.stock_blend) || [],
+    work_blend: (d.rows && d.rows.work_blend) || [],
   };
   if ((S.rows.stock_blend || []).some(r => r.s)) S.scalars.stock_blend_custom = true;   // 已有储备液混合试剂 → 锁定, 不被样液跟随覆盖
   S.editors = {
@@ -62,7 +63,7 @@ export function toSingle(S) {
     _draft_version: 1, _saved_at: new Date().toISOString().slice(0, 19).replace("T", "T"),
     makeup_mode: S.scalars.makeup_mode,
     scalars: { ...S.scalars },
-    rows: { reag: S.rows.reag, blend: S.rows.blend, stock_blend: S.rows.stock_blend },
+    rows: { reag: S.rows.reag, blend: S.rows.blend, stock_blend: S.rows.stock_blend, work_blend: S.rows.work_blend },
     editors: { work_df: S.editors.work_df, points_df: S.editors.points_df, spike_df: S.editors.spike_df },
   };
 }
@@ -90,7 +91,7 @@ export function scalarDefaultsMulti(B) {
     mu_liq_stock_makeup_mode: "single", mu_liq_stock_solvent_preset: "自定义", mu_liq_stock_solvent: B.makeup_solvent ?? "",
     mu_liq_stock_alpha: "", mu_liq_stock_reagents: [], mu_liq_stock_blend_n: 2,
     mu_work_serial_dilute: true, mu_work_same_solvent: true,
-    mu_work_solvent_preset: "自定义", mu_work_solvent: B.makeup_solvent ?? "", mu_work_alpha: "",
+    mu_work_solvent_preset: "自定义", mu_work_solvent: B.makeup_solvent ?? "", mu_work_alpha: "", mu_work_makeup_mode: "single", mu_work_blend_n: 2,
   };
 }
 

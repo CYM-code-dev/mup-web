@@ -56,7 +56,34 @@ GLASS_TOLERANCE = {
 }
 
 # 分度量器: 允差按均匀 √3 (全程读数缺中心化依据); 容量瓶/单标线 → 三角 √6
-_GRADUATED = {"pip_g", "cylinder"}
+# pip_p (可调移液枪): 容量允许误差为体积百分比, 按均匀 √3 计入 (JJG 646-2006)
+_GRADUATED = {"pip_g", "cylinder", "pip_p"}
+
+# 可调移液枪 (移液器) 容量允许误差, 分数形式 (相对移取体积), 取自 JJG 646-2006.
+# 仅 ≤1000μL 四档 (2-20/5-50/20-200/100-0μL) 校准点去重; 同一校准点跨设备允差一致.
+# 仅计容量误差项 (不计测量重复性); 校准点单位 mL. 设备: CK-SB330/053/083-1/302/206/365.
+PIPETTE_POINTS = [0.002, 0.004, 0.005, 0.01, 0.02, 0.025, 0.05, 0.1, 0.2, 0.5, 1.0]
+PIPETTE_TOL = {
+    0.002: 0.12, 0.004: 0.10, 0.005: 0.08, 0.01: 0.08, 0.02: 0.04,
+    0.025: 0.04, 0.05: 0.03, 0.1: 0.02, 0.2: 0.015, 0.5: 0.01, 1.0: 0.01,
+}
+
+
+def pipette_cal_point(vol):
+    """≥vol 的最近移液枪校准点 (mL); 无 (vol<最小点 0.002) → None。"""
+    cand = [p for p in PIPETTE_POINTS if p >= vol]
+    return min(cand) if cand else None
+
+
+def vessel_tol(kind, volume, nominal=None):
+    """量器允差 (绝对 mL): glass 查 GLASS_TOLERANCE; pip_p (移液枪) = PIPETTE_TOL[校准点]·volume.
+
+    pip_p 的允差是体积百分比, 故绝对允差随实际移取体积变化; nominal=校准点 (≥volume).
+    """
+    if kind == "pip_p":
+        cp = nominal if nominal is not None else pipette_cal_point(volume)
+        return PIPETTE_TOL[cp] * volume
+    return GLASS_TOLERANCE[(kind, nominal if nominal is not None else volume)]
 
 # I 级电子天平最大允许误差 (JJG 1036, 检定分度值 e=1mg), 按载荷(称样量) m 分档:
 #   0≤m≤50g → ±0.5mg;  50g<m≤200g → ±1.0mg;  m>200g → ±1.5mg
@@ -177,7 +204,7 @@ def urel_stock_liquid(Urel_cert, k_cert, pip=None, flask=None,
     terms = [urel_conc]
     if pip is not None:
         nominal = pip_nominal if pip_nominal is not None else pip[1]
-        tol = GLASS_TOLERANCE[(pip[0], nominal)]
+        tol = vessel_tol(pip[0], pip[1], nominal)
         u_pip, _, _ = urel_glassware(pip[0], pip[1], alpha, dtau, tol=tol)
         terms.append(u_pip)
         detail.append(("移取浓标", u_pip))
@@ -202,7 +229,7 @@ def dilution_budget(uses, alpha=1.19e-3, dtau=5.0):
     detail = []
     for use in uses:
         kind, volume, n = use[0], use[1], use[2]
-        tol = use[3] if len(use) > 3 and use[3] is not None else GLASS_TOLERANCE[(kind, volume)]
+        tol = use[3] if len(use) > 3 and use[3] is not None else vessel_tol(kind, volume)
         nominal = use[4] if len(use) > 4 and use[4] is not None else volume
         urel, urel_ml, urel_t = urel_glassware(kind, volume, alpha, dtau, tol=tol)
         total += n * urel ** 2

@@ -224,11 +224,11 @@ function sampleVesselLeads(meta) {
     { header: "使用规格 (mL)", cell: vuse },
   ];
 }
-const REAG_COUNT_KEY = { blend: "blend_n", reag: "n_reag", stock_blend: "stbl_n" };
-function renderReagentTable(parent, prefix, meta) {
+const REAG_COUNT_KEY = { blend: "blend_n", reag: "n_reag", stock_blend: "stbl_n", work_blend: "wbl_n" };
+function renderReagentTable(parent, prefix, meta, minRows = 2) {
   const countKey = REAG_COUNT_KEY[prefix];
   const rows = S().rows[prefix];
-  while (rows.length < 2) rows.push({});
+  while (rows.length < minRows) rows.push({});
   if (prefix === "reag") rows.forEach(r => { if (FLASK_LIKE(r.k) && r.v != null && r.v !== "") r.vi = Number(r.v); });
   S().scalars[countKey] = rows.length;
   const gh = el("div"); parent.appendChild(gh);
@@ -380,13 +380,17 @@ function renderT3(meta) {
   bindCheckbox2("逐级稀释", "work_serial_dilute", { on: () => renderT3(meta) });
   wc.appendChild(chkRow);
   if (!S().scalars.work_same_solvent) {
-    const wg = el("div", "grid-3");
-    bindSelect(wg, "工作液定容试剂", "work_solvent_preset", [...meta.solvents.map(s => ({ value: s.name_cn, label: s.name_cn })), { value: "自定义", label: "自定义" }], {
-      on: (v) => { const sol = meta.solvents.find(s => s.name_cn === v); if (sol) { S().scalars.work_solvent = sol.name_cn; S().scalars.work_alpha = sol.alpha; } renderT3(meta); }
+    const wm = el("div", "branch");
+    bindRadio(wm, "工作液定容试剂", "work_makeup_mode", [{ value: "single", label: "单一溶剂" }, { value: "mixed", label: "混合试剂" }], {
+      on: () => {
+        if (S().scalars.work_makeup_mode === "single") {
+          const r = S().rows.work_blend || []; S().rows.work_blend = r.slice(0, 1);   // 单一→保留首行
+        }
+        renderT3(meta);
+      }
     });
-    bindInput(wg, "试剂名称", "work_solvent");
-    bindInput(wg, "膨胀系数 α (1/℃)", "work_alpha", { type: "number" });
-    wc.appendChild(wg);
+    renderReagentTable(wm, "work_blend", meta, S().scalars.work_makeup_mode === "mixed" ? 2 : 1);
+    wc.appendChild(wm);
   }
   const gh = el("div"); gh.id = "grid-work";
   for (const r of S().editors.work_df) if (!("定容量器" in r)) r["定容量器"] = WORK_FLASK_DEFAULT;   // 初始/加载缺省 → 默认容量瓶
@@ -480,9 +484,9 @@ function renderTrace(meta, container) {
     const parts = [];
     (fb.errors || []).forEach(e => parts.push("❌ " + e));
     if ((fb.filled || []).length) parts.push("✓ 已填: " + fb.filled.join("、"));
-    (fb.notes || []).forEach(n => parts.push("• " + n));
-    if ((fb.manual || []).length) parts.push("⚠ 需手补: " + fb.manual.join("、"));
     if (fb.chain) parts.push("溯源链: " + fb.chain);
+    (fb.notes || []).forEach(n => parts.push('<span style="color:#c00">• ' + n + '</span>'));
+    if ((fb.manual || []).length) parts.push('<span style="color:#c00">⚠ 需手补: ' + fb.manual.join("、") + '</span>');
     f.innerHTML = parts.join("<br>");
     card.appendChild(f);
   }
@@ -496,6 +500,7 @@ async function applyTrace() {
   catch (e) { S().trace_fb = { errors: ["请求失败: " + e.message] }; renderT3(meta()); return; }
   if (r.error) { S().trace_fb = { errors: [r.error] }; renderT3(meta()); return; }
   Object.assign(S().scalars, r.scalars);
+  if (r.rows) Object.assign(S().rows, r.rows);
   if (r.work_df && r.work_df.length) S().editors.work_df = r.work_df;
   S().trace_fb = r.feedback;
   renderT3(meta());
@@ -564,8 +569,9 @@ function renderT4(meta) {
 }
 function curveChainTargets() {
   return (S().editors.work_df || [])
+    .filter(r => { const pv = r["移取体积(mL)"]; return pv !== "" && pv != null && isFinite(Number(pv)); })   // 含 0(零点), 排除空行
     .map(r => Number(r["目标浓度(mg/L)"]))
-    .filter(v => isFinite(v) && v > 0)
+    .filter(v => isFinite(v))
     .sort((a, b) => a - b);
 }
 function pointsGridCfg(meta) {
