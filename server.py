@@ -15,7 +15,7 @@ import json
 from decimal import Decimal
 
 from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -342,8 +342,12 @@ def ai_parse_multi(body: dict):
     return _resp(apply_ai_multi(body.get("prep_flow", "")))
 
 
-# ---- 静态前端 ----
-app.mount("/", StaticFiles(directory=os.path.join(ROOT, "static"), html=True), name="static")
+# ---- 静态前端 (挂在 /mup 下; 访问 http://host:8000/mup) ----
+@app.get("/")
+def _root():
+    return RedirectResponse("/mup")
+
+app.mount("/mup", StaticFiles(directory=os.path.join(ROOT, "static"), html=True), name="static")
 
 
 if __name__ == "__main__":
