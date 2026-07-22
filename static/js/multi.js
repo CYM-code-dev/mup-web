@@ -22,7 +22,7 @@ export async function init() {
   const meta = await getConstants();
   set("meta", meta);
   S().scalars = { ...scalarDefaultsMulti(meta.baseline_params) };
-  S().topo_rows = [{ 分组名: "纯品-1", 类型: "固体", 目标物: "目标物1" }, { 分组名: "液体-1", 类型: "液体", 目标物: "", "Urel%": null, "C_cert": null, "U_abs": null, "定容分组": "定容组1" }];
+  S().topo_rows = [{ 分组名: "纯品-1", 类型: "固体", 目标物: "多目标物1" }, { 分组名: "液体-1", 类型: "液体", 目标物: "", "Urel%": null, "C_cert": null, "U_abs": null, "定容分组": "定容组1" }];
   S().grp_params = {}; S().ding = {}; S().meas = null; S().curve_meta = {};
   const name = decodeURIComponent(location.hash.slice(1));
   if (name) {
@@ -777,10 +777,6 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
         const tdDg = el("td"); tdDg.appendChild(dgInp);
         const tdPv = el("td"); tdPv.appendChild(pipSel);
         const tdVol = el("td"); tdVol.appendChild(pv);
-        // 容量瓶: 每行独立单元格 (不合并); 同 dg 共享 flasks[dg] → 改任一行同组全变; Σ笔记仅组首行
-        const tdFl = el("td");
-        tdFl.appendChild(vesselSelect(meta, flasks[dg] || null, v => { flasks[dg] = v; re3(); }, "flask"));
-        if (gi === 0) tdFl.appendChild(interVsumNote(dg, grp, flasks));   // Σ移取体积 vs 容量瓶 (sum>flask → 装不下)
         // 删除按钮: 与工作液链一致 (row-del "−"); 仅剩一行时清空内容, 保留源可见
         const tdAct = el("td");
         const delBtn = el("button", "row-del"); delBtn.type = "button"; delBtn.textContent = "−";
@@ -792,7 +788,14 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
           re3();
         };
         tdAct.appendChild(delBtn);
-        tr.append(tdSrc, tdDg, tdPv, tdVol, tdFl, tdAct);
+        if (gi === 0) {   // 中间液分组(dg)名称一致 → 容量瓶合并为单一单元格 (rowspan 跨该 dg 全部行)
+          const tdFl = el("td"); tdFl.rowSpan = grp.length;
+          tdFl.appendChild(vesselSelect(meta, flasks[dg] || null, v => { flasks[dg] = v; re3(); }, "flask"));
+          tdFl.appendChild(interVsumNote(dg, grp, flasks));   // Σ移取体积 vs 容量瓶 (sum>flask → 装不下)
+          tr.append(tdSrc, tdDg, tdPv, tdVol, tdFl, tdAct);
+        } else {
+          tr.append(tdSrc, tdDg, tdPv, tdVol, tdAct);
+        }
         tbody.appendChild(tr);
       });
     });
@@ -983,7 +986,7 @@ function renderT4(meta) {
   c.appendChild(tc);
 }
 function analyteNames() {
-  // parity engine_multi.build_params_multi._show: 未勾选类型(如固体占位行"目标物1")整流程剔除
+  // parity engine_multi.build_params_multi._show: 未勾选类型(如固体占位行"多目标物1")整流程剔除
   const sh_s = S().scalars.mu_show_solid !== false, sh_l = S().scalars.mu_show_liquid !== false;
   const out = [];
   for (const r of S().topo_rows) {
@@ -1085,4 +1088,4 @@ function enableDownloads(body) {
 
 // 草稿保存 (暴露给工具条)
 window.__saveDraft = async (name) => { S().currentDraft = name; await draftsMultiSave(name, toMulti(S())); };
-window.__newDraft = () => { S().scalars = { ...scalarDefaultsMulti(meta().baseline_params) }; S().topo_rows = [{ 分组名: "纯品-1", 类型: "固体", 目标物: "目标物1" }, { 分组名: "液体-1", 类型: "液体", 目标物: "", "Urel%": null, "C_cert": null, "U_abs": null, "定容分组": "定容组1" }]; S().grp_params = {}; S().ding = {}; S().meas = null; S().curve_meta = {}; S().mu_rows = { blend: [], reag: [] }; location.hash = ""; location.reload(); };
+window.__newDraft = () => { S().scalars = { ...scalarDefaultsMulti(meta().baseline_params) }; S().topo_rows = [{ 分组名: "纯品-1", 类型: "固体", 目标物: "多目标物1" }, { 分组名: "液体-1", 类型: "液体", 目标物: "", "Urel%": null, "C_cert": null, "U_abs": null, "定容分组": "定容组1" }]; S().grp_params = {}; S().ding = {}; S().meas = null; S().curve_meta = {}; S().mu_rows = { blend: [], reag: [] }; location.hash = ""; location.reload(); };

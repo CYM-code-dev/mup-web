@@ -177,7 +177,7 @@ def write_template(path, groups=None, curve_meta=None, n_points=3, n_reps=2, n_i
     n_inj_meas: 每次测定进样次数; 「精密度&回收率」表行数/物 = n_reps × n_inj_meas, ≥1。
     多次进样(>1)时两表末列加「进样序号」(一次/二次…, 点内分组); =1 时无此列。"""
     if groups is None:
-        groups = [{"name": "纯品-1", "kind": "solid", "analytes": ["目标物1"]}]
+        groups = [{"name": "纯品-1", "kind": "solid", "analytes": ["多目标物1"]}]
     curve_meta = curve_meta or {}
     n_points = max(3, int(n_points or 3))
     n_reps = max(2, int(n_reps or 2))

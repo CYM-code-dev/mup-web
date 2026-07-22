@@ -98,7 +98,7 @@ export function scalarDefaultsMulti(B) {
 export function applyMulti(payload, S) {
   const d = payload || {};
   S.scalars = { ...scalarDefaultsMulti(S.meta?.baseline_params || {}), ...(d.scalars || {}) };
-  S.topo_rows = d.topo_rows || [{ 分组名: "纯品-1", 类型: "固体", 目标物: "目标物1" }];
+  S.topo_rows = d.topo_rows || [{ 分组名: "纯品-1", 类型: "固体", 目标物: "多目标物1" }];
   S.grp_params = d.grp_params || {};
   S.meas = d.meas ?? null;
   S.curve_meta = d.curve_meta || {};
