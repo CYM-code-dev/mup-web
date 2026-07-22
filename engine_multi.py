@@ -423,6 +423,9 @@ def build_params_multi(state):
         if m:
             for k in ("X", "p", "x_pred", "points", "replicates", "recovery"):
                 a[k] = m[k]
+            if "analyte_areas" in m:              # 内标法原始 分析物/内标 峰面积 (报告表5分行显示)
+                a["analyte_areas"] = m["analyte_areas"]
+                a["is_areas"] = m.get("is_areas", [])
             a["curve_method"] = m.get("curve_method", "外标法")
             a["is_name"] = m.get("is_name", "")
             if m.get("spike_C"):                             # ⑥ 新格式: 原始 加标C/m → 派生 测定值/回收率

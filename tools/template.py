@@ -119,11 +119,12 @@ def _read_spike_sheet(ws):
 
 def _read_curve_sheet(ws, methods):
     """新格式曲线长表 [目标物, 浓度mg/L, 分析物峰面积, 内标峰面积] →
-    {目标物: [(浓度, y), ...]}。按目标物 method 算 y:
+    {目标物: [(浓度, y), ...]} + {目标物: {"a":[分析物峰面积], "is":[内标峰面积]}}。
+    按目标物 method 算 y:
       内标法 → 分析物峰面积/内标峰面积 (缺/0/非法 → 记 missing, 跳过该点);
       外标法 → 分析物峰面积 (内标峰面积列忽略)。
-    methods: {目标物: "外标法"/"内标法"}。返回 (out, missing_set)。"""
-    out, missing = {}, set()
+    methods: {目标物: "外标法"/"内标法"}。返回 (out, missing_set, areas)。"""
+    out, missing, areas = {}, set(), {}
     for row in ws.iter_rows(min_row=2, values_only=True):
         if not row or row[0] is None:
             continue
@@ -143,7 +144,11 @@ def _read_curve_sheet(ws, methods):
         else:
             y = a_area
         out.setdefault(nm, []).append((conc, y))
-    return out, missing
+        d = areas.setdefault(nm, {"a": [], "is": []})
+        d["a"].append(a_area)
+        if methods.get(nm) == "内标法":
+            d["is"].append(ia)
+    return out, missing, areas
 
 
 def _num(d, key, cast):
@@ -290,8 +295,9 @@ def read_template(path):
     curve_ws = wb[_curve_sn] if _curve_sn else None
     curve_hdr = ([str(c.value).strip() for c in curve_ws[1]] if curve_ws else [])
     errors = []
+    curve_areas = {}
     if any(h and "内标峰面积" in h for h in curve_hdr):
-        curves, missing_is = _read_curve_sheet(curve_ws, methods)
+        curves, missing_is, curve_areas = _read_curve_sheet(curve_ws, methods)
         for nm in sorted(missing_is):
             errors.append(f"{nm}: 内标法曲线点缺/非法内标峰面积")
     else:
@@ -317,6 +323,10 @@ def read_template(path):
             recs = _group_long(wb["回收率"], 1) if "回收率" in wb.sheetnames else {}
     for nm, a in out.items():
         a["points"] = curves.get(nm, [])
+        _ca = curve_areas.get(nm)
+        if _ca:                                  # 新格式: 保留原始 分析物/内标 峰面积 (报告表5内标法分行显示)
+            a["analyte_areas"] = _ca["a"]
+            a["is_areas"] = _ca["is"]
         if not has_pr_in_target:   # 合并格式: reps/recs 留空待合并段派生; 旧格式从分表填
             a["replicates"] = reps.get(nm, [])
             a["recovery"] = recs.get(nm, [])

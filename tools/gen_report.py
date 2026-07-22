@@ -152,7 +152,11 @@ def _work_flow_rows_multi(grp, unit):
             return None
 
     def _vol(pv):
-        return f"{pv:.2f}" if isinstance(pv, (int, float)) and pv else ""
+        try:
+            v = float(pv)
+        except (TypeError, ValueError):
+            return ""
+        return f"{v:.2f}" if v else ""
 
     rows = []
     # feeds[src] 规范化为数组 (前端 multi.js:729); 兼容旧草稿单对象
@@ -1191,9 +1195,16 @@ def render_multi(method, groups, analytes, results):
         _yfmt = lambda v: str(int(v)) if float(v).is_integer() else str(v)
         for a, r, pts in _rows44:
             nm = a.get("name", "")
-            ylab = "响应比" if a.get("curve_method") == "内标法" else "峰面积"
+            is_is = a.get("curve_method") == "内标法"
+            a_areas = a.get("analyte_areas") or []
+            i_areas = a.get("is_areas") or []
             A(f"| {nm} | X (mg/L) | " + " | ".join(_xfmt(x) for x, _ in pts) + " |")
-            A(f"| {nm} | {ylab} | " + " | ".join(_yfmt(y) for _, y in pts) + " |")
+            if is_is and a_areas and i_areas:    # 内标法: 分行显 目标物峰面积/内标峰面积 (对齐单目标物范本)
+                A(f"| {nm} | 目标物峰面积 | " + " | ".join(_yfmt(v) for v in a_areas) + " |")
+                A(f"| {nm} | 内标峰面积 | " + " | ".join(_yfmt(v) for v in i_areas) + " |")
+            else:
+                ylab = "响应比" if is_is else "峰面积"
+                A(f"| {nm} | {ylab} | " + " | ".join(_yfmt(y) for _, y in pts) + " |")
         A("")
     # 方法学叙述 (写一次): 定义 x/y + 线性方程; Sxx/s/u(Q)/u_rel(Q) 各独占一显示行 (对齐单目标物范本,
     # 多目标物无逐物数值, 仅符号式)
