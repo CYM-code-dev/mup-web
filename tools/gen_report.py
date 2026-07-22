@@ -28,6 +28,22 @@ def _f(x, nd=4):
     return f"{x:#.{nd}g}"
 
 
+def _conc_fmt(v):
+    """浓度显示串: <0.10→3位小数, ≥0.10→2位小数; <0.001 mg/L 不修约, 保留足够小数位."""
+    if v is None or (isinstance(v, float) and not math.isfinite(v)):
+        return str(v) if v is not None else ""
+    try:
+        x = float(v)
+    except (TypeError, ValueError):
+        return str(v) if v not in (None, "") else ""
+    if x == 0:
+        return "0.000"
+    if abs(x) < 0.001:
+        dp = int(math.floor(-math.log10(abs(x)))) + 1
+        return f"{x:.{dp}f}"
+    return f"{x:.3f}" if abs(x) < 0.1 else f"{x:.2f}"
+
+
 def _ceil_dp(x, dp):
     """x 向上修约到 dp 位小数 (ROUND_CEILING; 不确定度只进不舍)."""
     if x is None or x == 0 or not math.isfinite(x):
@@ -127,11 +143,7 @@ def _work_flow_rows_multi(grp, unit):
             return None
 
     def _conc(x):
-        try:
-            v = float(x)
-        except (TypeError, ValueError):
-            return str(x) if x not in (None, "") else ""
-        return f"{v:.3f}" if abs(v) < 0.1 else f"{v:.2f}"   # <0.10 留3位 / ≥0.10 留2位
+        return _conc_fmt(x)
 
     def _dilute(a, b, c):
         try:
@@ -143,18 +155,22 @@ def _work_flow_rows_multi(grp, unit):
         return f"{pv:.2f}" if isinstance(pv, (int, float)) and pv else ""
 
     rows = []
-    fd = feeds.get(unit)
-    dg = fd.get("dg") if fd else None
+    # feeds[src] 规范化为数组 (前端 multi.js:729); 兼容旧草稿单对象
+    fd_raw = feeds.get(unit)
+    fd_list = fd_raw if isinstance(fd_raw, list) else ([fd_raw] if fd_raw else [])
+    # 工作液链按首个有效 feed 的 dg 查一次 (同 unit 各 feed 同 dg)
+    dg = next((fd.get("dg") for fd in fd_list if fd and fd.get("dg")), None)
     wchain = work.get(dg) or [] if dg is not None else []
     # 中间液 (混合定容): 源单元移取 → 所在 dg 容量瓶定容
-    if fd and fd.get("pip_vol") and float(fd["pip_vol"]) > 0:
-        pv = float(fd["pip_vol"])
-        fv_str = flasks.get(dg)
-        fv = _nominal(fv_str)
-        inter_c = wchain[0].get("母液浓度(mg/L)") if wchain else None
-        stock_c = _dilute(inter_c, fv, pv) if (inter_c is not None and fv) else None
-        rows.append(f"| {_conc(stock_c)} | {_vol(pv)} | {_strip(fd.get('pip_vessel'))} | "
-                    f"{_strip(fv_str)} | {_conc(inter_c)} |")
+    for fd in fd_list:
+        if fd and fd.get("pip_vol") and float(fd["pip_vol"]) > 0:
+            pv = float(fd["pip_vol"])
+            fv_str = flasks.get(fd.get("dg"))
+            fv = _nominal(fv_str)
+            inter_c = wchain[0].get("母液浓度(mg/L)") if wchain else None
+            stock_c = _dilute(inter_c, fv, pv) if (inter_c is not None and fv) else None
+            rows.append(f"| {_conc(stock_c)} | {_vol(pv)} | {_strip(fd.get('pip_vessel'))} | "
+                        f"{_strip(fv_str)} | {_conc(inter_c)} |")
     # 工作液 (串行稀释): 目标 = 母液×移取/定容
     for s in wchain:
         fv = _nominal(s.get("flask_vessel"))
@@ -818,7 +834,7 @@ def render(method, r):
         A(f"表{nt} 目标物理论浓度与峰面积\n")
         A("| 项目 | 浓度 | " + " | ".join(f"X{i+1}" for i in range(n_pt)) + " |")
         A("|---|" + "---|" * (n_pt + 1))
-        A(f"| {analyte} | X (mg/L) | " + " | ".join(g(x) for x, _ in pts) + " |")
+        A(f"| {analyte} | X (mg/L) | " + " | ".join(_conc_fmt(x) for x, _ in pts) + " |")
         if is_is:
             a_areas = method.get("analyte_areas") or [yy for _, yy in pts]
             i_areas = method.get("is_areas") or []
@@ -1070,8 +1086,8 @@ def render_multi(method, groups, analytes, results):
         # 储备液逐物取值表: 各物全同(液体混标共享标液/证书一致)→ 一行汇总, 略去无差异逐物表
         _srows = []
         for i in idxs:
-            sd = results[i].get("stock_detail") or []
-            _vals = tuple(sd[j][1] if j < len(sd) else None for j in range(3))
+            sd = dict(results[i].get("stock_detail") or [])  # {标签: 值}, 按标签匹配避免错位
+            _vals = tuple(sd.get(lbl) for lbl in src_labels)
             _srows.append((_vals, results[i].get("u_stock")))
         if len(set(_srows)) <= 1:
             A(f"本分组各目标物标准储备液配制一致，$u_{{rel}}(C_{{stock}})$ 均为 {_f(results[idxs[0]].get('u_stock'))}。")
@@ -1170,8 +1186,8 @@ def render_multi(method, groups, analytes, results):
         A(f"表{nt} 各目标物理论浓度与峰面积\n")
         A("| 项目 | 浓度 | " + " | ".join(f"X{i+1}" for i in range(_max_pt)) + " |")
         A("|---|" + "---|" * (_max_pt + 1))
-        # 浓度: <0.10→3位小数, ≥0.10→2位小数; 峰面积/响应比: 不修约 (整数去.0, 小数原样)
-        _xfmt = lambda v: f"{v:.3f}" if v < 0.10 else f"{v:.2f}"
+        # 浓度: <0.001 不修约, <0.10→3位小数, ≥0.10→2位小数; 峰面积/响应比: 不修约 (整数去.0, 小数原样)
+        _xfmt = lambda v: _conc_fmt(v)
         _yfmt = lambda v: str(int(v)) if float(v).is_integer() else str(v)
         for a, r, pts in _rows44:
             nm = a.get("name", "")

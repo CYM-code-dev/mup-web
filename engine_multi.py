@@ -43,24 +43,28 @@ def _analyte_work_uses(group, a):
         _unit = (a.get("group") or "").strip()        # 中间液/工作液按定容分组共享 → feeds 改按分组名键
     else:
         _unit = a.get("name")
-    fd = feeds.get(_unit)
-    if not fd:
+    fd_raw = feeds.get(_unit)
+    if not fd_raw:
         return []
-    _pv = fd.get("pip_vol")
-    if not (_pv and float(_pv) > 0 and _resolve_pip(fd.get("pip_vessel"))[0] is not None):
-        return []
-    dg = fd.get("dg")
-    ops = [("pip", fd["pip_vessel"], float(_pv))]
-    fv = (inter.get("flasks") or {}).get(dg)
-    if fv in _FLASK_REV:
-        ops.append(("flask", fv, None))
-    for step in (group.get("work") or {}).get(dg) or []:
-        _sv = step.get("pip_vol")
-        if _sv and float(_sv) > 0 and _resolve_pip(step.get("pip_vessel"))[0] is not None:
-            ops.append(("pip", step["pip_vessel"], float(_sv)))
-            if step.get("flask_vessel") in _FLASK_REV:
-                ops.append(("flask", step["flask_vessel"], None))
-    return _uses_from_ops(ops)
+    # feeds[src] 规范化为数组 (前端 multi.js:729); 兼容旧草稿单对象
+    fd_list = fd_raw if isinstance(fd_raw, list) else [fd_raw]
+    ops = []
+    for fd in fd_list:
+        _pv = fd.get("pip_vol")
+        if not (_pv and float(_pv) > 0 and _resolve_pip(fd.get("pip_vessel"))[0] is not None):
+            continue
+        dg = fd.get("dg")
+        ops.append(("pip", fd["pip_vessel"], float(_pv)))
+        fv = (inter.get("flasks") or {}).get(dg)
+        if fv in _FLASK_REV:
+            ops.append(("flask", fv, None))
+        for step in (group.get("work") or {}).get(dg) or []:
+            _sv = step.get("pip_vol")
+            if _sv and float(_sv) > 0 and _resolve_pip(step.get("pip_vessel"))[0] is not None:
+                ops.append(("pip", step["pip_vessel"], float(_sv)))
+                if step.get("flask_vessel") in _FLASK_REV:
+                    ops.append(("flask", step["flask_vessel"], None))
+    return _uses_from_ops(ops) if ops else []
 
 
 # ---- 逐字移植 app.py:1223-1237 ----
@@ -134,9 +138,9 @@ def _build_params(method, group, a):
         dg = a.get("ding_group") or "1"
         fl = group.get("flasks", {}).get(dg, {})
         _pk, _pnom = _resolve_pip(fl.get("pip_vessel"))   # 量器名→类型 (UI 只写 pip_vessel; 镜像 engine_single:228)
-        _pv = fl.get("pip_vol")
+        _pv = _fnum(fl.get("pip_vol"))                    # 字符串("1.00")→float; 镜像 engine_single:307
         _pk2 = _pk or fl.get("pip_kind")
-        pip = (_pk2, _pv) if _pk2 and isinstance(_pv, (int, float)) and _pv > 0 else None
+        pip = (_pk2, _pv) if _pk2 and _pv and _pv > 0 else None
         p["u_stock"], p["stock_detail"] = urel_stock_liquid(
             (a.get("Urel_cert") or 0.0) if cm == "relative" else 0.0,
             kc, pip=pip, flask=fl.get("flask_vol"),
@@ -476,9 +480,12 @@ def build_params_multi(state):
                 errors.append(f"{a['name']}(liquid/absolute): 缺 C_cert/U_abs(表) 或 k_cert(该组折叠)")
         _inter = g.get("inter") or {}
         _unit = a["group"] if g["kind"] == "liquid" else a["name"]
-        _fd = (_inter.get("feeds") or {}).get(_unit)
-        if _fd and float(_fd.get("pip_vol") or 0) > 0 and _fd.get("dg") not in (_inter.get("flasks") or {}):
-            errors.append(f"{a['name']}: 中间液分组「{_fd.get('dg')}」缺容量瓶(中间液标签页该分组下拉)")
+        _fd_raw = (_inter.get("feeds") or {}).get(_unit)
+        # feeds[src] 规范化为数组 (前端 multi.js:729); 兼容旧草稿单对象
+        _fd_list = _fd_raw if isinstance(_fd_raw, list) else ([_fd_raw] if _fd_raw else [])
+        for _fd in _fd_list:
+            if _fd and float(_fd.get("pip_vol") or 0) > 0 and _fd.get("dg") not in (_inter.get("flasks") or {}):
+                errors.append(f"{a['name']}: 中间液分组「{_fd.get('dg')}」缺容量瓶(中间液标签页该分组下拉)")
     if _is_na(method.get("m_sample")) or method.get("m_sample") <= 0:
         errors.append("称样量必须 > 0")
     _mm = method.get("makeup_mode", "single")
