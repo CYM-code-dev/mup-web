@@ -879,7 +879,13 @@ function vesselSelect(meta, val, on, kindFilter) {
 }
 function targetStr(c, v, fnom) {
   if (c == null || v == null || !fnom) return null;
-  return concStr(Number(c) * Number(v) / Number(fnom));
+  const val = Number(c) * Number(v) / Number(fnom);
+  // 目标浓度 < 0.001 mg/L 不修约，保留足够小数位显示
+  if (Math.abs(val) < 0.001 && val !== 0) {
+    const dp = Math.floor(-Math.log10(Math.abs(val))) + 1;
+    return val.toFixed(dp);
+  }
+  return concStr(val);
 }
 // 移取体积校验 → 标红 + tooltip (非阻塞): 单标吸量管须=标称; 移液枪须在量程档[满量程×10%, 满量程]; 分度吸量管/量筒等 ≤ 量程; 传 flaskVesselStr 则校验 移取体积≤定容量瓶(单步, 工作液链用)
 function syncPipOverflow(volInp, pipVesselStr, flaskVesselStr) {

@@ -446,7 +446,13 @@ function updateWorkNote(rows) {
 }
 function targetStr(c, v, fnom) {
   if (c == null || v == null || !fnom) return null;
-  return concStr(Number(c) * Number(v) / Number(fnom));
+  const val = Number(c) * Number(v) / Number(fnom);
+  // 目标浓度 < 0.001 mg/L 不修约，保留足够小数位显示
+  if (Math.abs(val) < 0.001 && val !== 0) {
+    const dp = Math.floor(-Math.log10(Math.abs(val))) + 1;
+    return val.toFixed(dp);
+  }
+  return concStr(val);
 }
 // 纯品称量储备液浓度 (mg/L) = m_std(g)·purity·1e6 / 储备液容量瓶(mL); purity 已存为小数 → 结果即 mg/L
 function solidStockConc() {

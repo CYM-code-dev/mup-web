@@ -120,6 +120,8 @@ def urel_glassware(kind, volume, alpha=1.19e-3, dtau=5.0, tol=None, nominal=None
       缺省 nominal=volume(满刻度). 部分移取(如 50mL量筒取40mL)时 nominal≠volume.
     温度膨胀始终均匀 √3: urel(t)=α·Δτ/√3 (与 V 无关). RSS 合成.
     """
+    if not isinstance(volume, (int, float)) or not volume:
+        return 0.0, 0.0, 0.0
     if tol is None:
         tol = GLASS_TOLERANCE[(kind, nominal if nominal is not None else volume)]
     k_ml = SQRT3 if kind in _GRADUATED else SQRT6

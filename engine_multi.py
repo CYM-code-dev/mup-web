@@ -134,7 +134,9 @@ def _build_params(method, group, a):
         dg = a.get("ding_group") or "1"
         fl = group.get("flasks", {}).get(dg, {})
         _pk, _pnom = _resolve_pip(fl.get("pip_vessel"))   # 量器名→类型 (UI 只写 pip_vessel; 镜像 engine_single:228)
-        pip = (_pk or fl.get("pip_kind"), fl.get("pip_vol"))
+        _pv = fl.get("pip_vol")
+        _pk2 = _pk or fl.get("pip_kind")
+        pip = (_pk2, _pv) if _pk2 and isinstance(_pv, (int, float)) and _pv > 0 else None
         p["u_stock"], p["stock_detail"] = urel_stock_liquid(
             (a.get("Urel_cert") or 0.0) if cm == "relative" else 0.0,
             kc, pip=pip, flask=fl.get("flask_vol"),

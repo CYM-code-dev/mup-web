@@ -322,16 +322,25 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1"):
     kc = int(method["k_cert"])
     cert_mode = method.get("cert_mode", "relative")
     Urel = method.get("Urel_cert", 0.0)
-    pk = method["pip_kind"]
-    pv = float(method["pip_vol"])                          # 实际移取体积 (允差项除数)
-    pnom = method.get("pip_nominal", pv)                   # 量器规格 (查允差; 满刻度时=pv); pip_p=校准点(可为分数 mL)
-    if pk != "pip_p":
-        pnom = int(pnom)
+    pk = method.get("pip_kind") or None
+    pv = float(method.get("pip_vol", 0) or 0)                # 实际移取体积 (允差项除数)
+    if pk and pv > 0:
+        pnom = method.get("pip_nominal") or pv               # 量器规格 (查允差; 满刻度时=pv); pip_p=校准点(可为分数 mL)
+        if pk != "pip_p":
+            pnom = int(pnom)
+        tol_p = vessel_tol(pk, pv, pnom)                     # 移取浓标吸量管允差 (pip_p=PIPETTE_TOL[校准点]·pv)
+        k_pip = sq(3) if pk in _GRADUATED else sq(6)          # 分度吸量管/量筒 √3 / 单标吸量管 √6
+        ksym_p = "\\sqrt{3}" if pk in _GRADUATED else "\\sqrt{6}"
+        dist_p = "均匀分布（k=√3）" if pk in _GRADUATED else "三角分布（k=√6）"
+        p_ml = tol_p / (k_pip * pv)                         # 移取浓标 允差
+        p_t = alpha_conc * dtau / sq(3)                     # 移取浓标 温度 (浓标α)
+        u_pip = sq(p_ml ** 2 + p_t ** 2)                    # 移取浓标 合成
+        _has_pip = True
+    else:
+        pnom = pv; tol_p = 0; k_pip = 0; ksym_p = ""; dist_p = ""
+        p_ml = 0; p_t = 0; u_pip = 0
+        _has_pip = False
     fv = int(method["stock_flask_volume"])
-    tol_p = vessel_tol(pk, pv, pnom)                       # 移取浓标吸量管允差 (pip_p=PIPETTE_TOL[校准点]·pv)
-    k_pip = sq(3) if pk in _GRADUATED else sq(6)            # 分度吸量管/量筒 √3 / 单标吸量管 √6
-    ksym_p = "\\sqrt{3}" if pk in _GRADUATED else "\\sqrt{6}"
-    dist_p = "均匀分布（k=√3）" if pk in _GRADUATED else "三角分布（k=√6）"
     tol_f = GLASS_TOLERANCE[("flask", fv)]
     reags = method.get("stock_reagents")
     if reags:
@@ -345,21 +354,23 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1"):
         u_cert = U_abs / (kc * C_cert)                      # 证书浓度 (绝对式: U/(k·C))
     else:
         u_cert = Urel / (kc * 100.0)                        # 证书浓度 (相对式: Urel/(k·100))
-    p_ml = tol_p / (k_pip * pv)                           # 移取浓标 允差
-    p_t = alpha_conc * dtau / sq(3)                       # 移取浓标 温度 (浓标α)
-    u_pip = sq(p_ml ** 2 + p_t ** 2)                      # 移取浓标 合成
     v_ml = tol_f / (sq(6) * fv)                           # 定容 容量瓶允差
     v_t = alpha_s * dtau / sq(3)                          # 定容 温度 (定容试剂α)
     u_sv = sq(v_ml ** 2 + v_t ** 2)                       # 定容 合成
     L = []
     A = L.append
-    A(f"{analyte}储备液由高浓液标准确移取后定容制得，因此其不确定度主要有三个来源：标准品证书浓度"
-      f"产生的不确定度 $u_{{rel}}(c_{{s,c}})$，移取浓标体积产生的不确定度 $u_{{rel}}(c_{{s,p}})$，"
-      f"定容体积产生的不确定度 $u_{{rel}}(c_{{s,V}})$。")
-    A("$$ u_{rel}(C_{stock}) = \\sqrt{u_{rel}(c_{s,c})^{2} + u_{rel}(c_{s,p})^{2}"
-      " + u_{rel}(c_{s,V})^{2}} $$")
-    A(f"储备液的配置流程：准确用{g(pnom)}mL{KIND_CN[pk]}移取{g(pv)}mL浓标于{fv}mL容量瓶中，"
-      + (f"用{solvent}定容。" if solvent else "定容。"))
+    if _has_pip:
+        A(f"{analyte}储备液由高浓液标准确移取后定容制得，因此其不确定度主要有三个来源：标准品证书浓度"
+          f"产生的不确定度 $u_{{rel}}(c_{{s,c}})$，移取浓标体积产生的不确定度 $u_{{rel}}(c_{{s,p}})$，"
+          f"定容体积产生的不确定度 $u_{{rel}}(c_{{s,V}})$。")
+        A("$$ u_{rel}(C_{stock}) = \\sqrt{u_{rel}(c_{s,c})^{2} + u_{rel}(c_{s,p})^{2}"
+          " + u_{rel}(c_{s,V})^{2}} $$")
+        A(f"储备液的配置流程：准确用{g(pnom)}mL{KIND_CN[pk]}移取{g(pv)}mL浓标于{fv}mL容量瓶中，"
+          + (f"用{solvent}定容。" if solvent else "定容。"))
+    else:
+        A(f"{analyte}储备液直接由高浓液标定容制得，因此其不确定度主要有两个来源：标准品证书浓度"
+          f"产生的不确定度 $u_{{rel}}(c_{{s,c}})$，定容体积产生的不确定度 $u_{{rel}}(c_{{s,V}})$。")
+        A("$$ u_{rel}(C_{stock}) = \\sqrt{u_{rel}(c_{s,c})^{2} + u_{rel}(c_{s,V})^{2}} $$")
     # 4.3.1.1 证书浓度
     A(f"**{sec}.1 标准品证书浓度产生的不确定度 $u_{{rel}}(c_{{s,c}})$**")
     if cert_mode == "absolute":
@@ -373,35 +384,38 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1"):
         A("$$ u_{rel}(c_{s,c}) = \\frac{U_{rel}}{k \\times 100} = \\frac{" + g(Urel)
           + "}{" + str(kc) + " \\times 100} = " + _f(u_cert) + " $$")
     # 4.3.1.2 移取浓标 (吸量管允差 + 温度; 仅吸量管, 不含容量瓶)
-    A(f"**{sec}.2 移取浓标体积产生的不确定度 $u_{{rel}}(c_{{s,p}})$**")
-    A("此相对标准不确定度的来源有两个：一是移取浓标所用吸量管允差引入的相对标准不确定度"
-      " $u_{rel}(c_{s,p,容})$，二是温度变化引入的相对标准不确定度 $u_{rel}(c_{s,p,\\tau})$。")
-    A("$$ u_{rel}(c_{s,p}) = \\sqrt{u_{rel}(c_{s,p,容})^{2} + u_{rel}(c_{s,p,\\tau})^{2}} $$")
-    _partial = "" if pnom == pv else f"（量器规格{g(pnom)}mL，实际移取{g(pv)}mL）"
-    A(f"根据JJG 196-2006《常用玻璃量器》规定，20℃时{g(pnom)}mL{KIND_CN[pk]}（A级）的允差"
-      f"d=±{g(tol_p)}mL，按{dist_p}，则移取浓标体积引入的相对不确定度{_partial}为：")
-    A("$$ u_{rel}(c_{s,p,容}) = \\frac{d}{k \\cdot V} = \\frac{" + g(tol_p) + "}{" + ksym_p
-      + " \\times " + g(pv) + "} = " + _f(p_ml) + " $$")
-    A(f"假定实验室的温度变化在（{env_temp:g}±{dtau:g}）℃（∆τ={dtau:g}），温度变化为均匀分布。"
-      f"浓标溶液的体积膨胀系数α为{_sci_t(alpha_conc)}/℃，按均匀分布，k=√3，则温度变化引入的相对不确定度为：")
-    A("$$ u_{rel}(c_{s,p,\\tau}) = \\frac{\\alpha \\cdot \\Delta\\tau \\cdot V}{\\sqrt{3} \\cdot V}"
-      " = \\frac{" + _sci_l(alpha_conc) + " \\times " + g(dtau) + " \\times " + g(pv)
-      + "}{\\sqrt{3} \\times " + g(pv) + "} = " + _f(p_t) + " $$")
-    A("则移取浓标体积产生的不确定度：")
-    A("$$ u_{rel}(c_{s,p}) = \\sqrt{u_{rel}(c_{s,p,容})^{2} + u_{rel}(c_{s,p,\\tau})^{2}}"
-      " = \\sqrt{" + _f(p_ml) + "^{2} + " + _f(p_t) + "^{2}} = " + _f(u_pip) + " $$")
-    # 4.3.1.3 定容 (容量瓶允差 + 定容试剂温度) — 复用纯品称量 4.3.1.3 写法
-    A(f"**{sec}.3 定容体积产生的不确定度 $u_{{rel}}(c_{{s,V}})$**")
+    _sec_flask = f"{sec}.2"                    # 无 pip 时定容节水号; 有 pip 时下面覆写
+    if _has_pip:
+        _sec_flask = f"{sec}.3"
+        A(f"**{sec}.2 移取浓标体积产生的不确定度 $u_{{rel}}(c_{{s,p}})$**")
+        A("此相对标准不确定度的来源有两个：一是移取浓标所用吸量管允差引入的相对标准不确定度"
+          " $u_{rel}(c_{s,p,容})$，二是温度变化引入的相对标准不确定度 $u_{rel}(c_{s,p,\\tau})$。")
+        A("$$ u_{rel}(c_{s,p}) = \\sqrt{u_{rel}(c_{s,p,容})^{2} + u_{rel}(c_{s,p,\\tau})^{2}} $$")
+        _partial = "" if pnom == pv else f"（量器规格{g(pnom)}mL，实际移取{g(pv)}mL）"
+        A(f"根据JJG 196-2006《常用玻璃量器》规定，20℃时{g(pnom)}mL{KIND_CN[pk]}（A级）的允差"
+          f"d=±{g(tol_p)}mL，按{dist_p}，则移取浓标体积引入的相对不确定度{_partial}为：")
+        A("$$ u_{rel}(c_{s,p,容}) = \\frac{d}{k \\cdot V} = \\frac{" + g(tol_p) + "}{" + ksym_p
+          + " \\times " + g(pv) + "} = " + _f(p_ml) + " $$")
+        A(f"假定实验室的温度变化在（{env_temp:g}±{dtau:g}）℃（∆τ={dtau:g}），温度变化为均匀分布。"
+          f"浓标溶液的体积膨胀系数α为{_sci_t(alpha_conc)}/℃，按均匀分布，k=√3，则温度变化引入的相对不确定度为：")
+        A("$$ u_{rel}(c_{s,p,\\tau}) = \\frac{\\alpha \\cdot \\Delta\\tau \\cdot V}{\\sqrt{3} \\cdot V}"
+          " = \\frac{" + _sci_l(alpha_conc) + " \\times " + g(dtau) + " \\times " + g(pv)
+          + "}{\\sqrt{3} \\times " + g(pv) + "} = " + _f(p_t) + " $$")
+        A("则移取浓标体积产生的不确定度：")
+        A("$$ u_{rel}(c_{s,p}) = \\sqrt{u_{rel}(c_{s,p,容})^{2} + u_{rel}(c_{s,p,\\tau})^{2}}"
+          " = \\sqrt{" + _f(p_ml) + "^{2} + " + _f(p_t) + "^{2}} = " + _f(u_pip) + " $$")
+    # 4.3.1.{2|3} 定容 (容量瓶允差 + 定容试剂温度) — 复用纯品称量 4.3.1.3 写法
+    A(f"**{_sec_flask} 定容体积产生的不确定度 $u_{{rel}}(c_{{s,V}})$**")
     A("此相对标准不确定度的来源有两个：一是配制标准储备液使用的容量瓶允差引入的相对标准不确定度"
       " $u_{rel}(c_{s,V容})$，二是温度变化导致定容试剂体积膨胀引入的相对标准不确定度"
       " $u_{rel}(c_{s,Vt})$。")
     A("$$ u_{rel}(c_{s,V}) = \\sqrt{u_{rel}(c_{s,V容})^{2} + u_{rel}(c_{s,Vt})^{2}} $$")
-    A(f"**{sec}.3.1 容量瓶允差引入的相对不确定度 $u_{{rel}}(c_{{s,V容}})$**")
+    A(f"**{_sec_flask}.1 容量瓶允差引入的相对不确定度 $u_{{rel}}(c_{{s,V容}})$**")
     A(f"根据JJG 196-2006《常用玻璃量器》规定，20℃时{fv}mL单标线容量瓶（A级，V={fv}mL）的允差"
       f"d=±{g(tol_f)}mL，按三角分布（k=√6），则{fv}mL容量瓶体积引入的相对不确定度为：")
     A("$$ u_{rel}(c_{s,V容}) = \\frac{d}{k \\cdot V} = \\frac{" + g(tol_f)
       + "}{\\sqrt{6} \\times " + g(fv) + "} = " + _f(v_ml) + " $$")
-    A(f"**{sec}.3.2 温度变化引入的相对不确定度 $u_{{rel}}(c_{{s,Vt}})$**")
+    A(f"**{_sec_flask}.2 温度变化引入的相对不确定度 $u_{{rel}}(c_{{s,Vt}})$**")
     _sa = _sample_effective_alpha(method, r)
     if _sa is not None and math.isclose(_sa, alpha_s, rel_tol=1e-9):
         # 温度项与样液定容(4.2.2)一致: 只引用 + 取值, 不重复 α·Δτ/√3 推导
@@ -429,9 +443,14 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1"):
     A("$$ u_{rel}(c_{s,V}) = \\sqrt{u_{rel}(c_{s,V容})^{2} + u_{rel}(c_{s,Vt})^{2}}"
       " = \\sqrt{" + _f(v_ml) + "^{2} + " + _f(v_t) + "^{2}} = " + _f(u_sv) + " $$")
     A("故配制标准储备液引入的相对不确定度：")
-    A("$$ u_{rel}(C_{stock}) = \\sqrt{u_{rel}(c_{s,c})^{2} + u_{rel}(c_{s,p})^{2}"
-      " + u_{rel}(c_{s,V})^{2}} = \\sqrt{" + _f(u_cert) + "^{2} + " + _f(u_pip) + "^{2} + "
-      + _f(u_sv) + "^{2}} = " + _f(r["u_stock"]) + " $$")
+    if _has_pip:
+        A("$$ u_{rel}(C_{stock}) = \\sqrt{u_{rel}(c_{s,c})^{2} + u_{rel}(c_{s,p})^{2}"
+          " + u_{rel}(c_{s,V})^{2}} = \\sqrt{" + _f(u_cert) + "^{2} + " + _f(u_pip) + "^{2} + "
+          + _f(u_sv) + "^{2}} = " + _f(r["u_stock"]) + " $$")
+    else:
+        A("$$ u_{rel}(C_{stock}) = \\sqrt{u_{rel}(c_{s,c})^{2} + u_{rel}(c_{s,V})^{2}}"
+          " = \\sqrt{" + _f(u_cert) + "^{2} + " + _f(u_sv) + "^{2}} = "
+          + _f(r["u_stock"]) + " $$")
     return L
 
 
@@ -973,10 +992,10 @@ def _stock_method_for_analyte(method, grp, a):
             "Urel_cert": a.get("Urel_cert", 0.0),
             "C_cert": a.get("C_cert") or grp.get("C_cert"),
             "U_abs": a.get("U_abs") or grp.get("U_abs"),
-            "pip_kind": fl.get("pip_kind"),
-            "pip_vol": fl.get("pip_vol"),
-            "pip_nominal": fl.get("pip_nominal"),
-            "stock_flask_volume": fl.get("flask_vol"),
+            "pip_kind": fl.get("pip_kind") or "",
+            "pip_vol": fl.get("pip_vol") or 0,
+            "pip_nominal": fl.get("pip_nominal") or None,
+            "stock_flask_volume": fl.get("flask_vol") or 0,
         })
     else:   # solid
         bal = grp.get("balance_tol_g")
