@@ -22,7 +22,7 @@ export async function init() {
   const meta = await getConstants();
   set("meta", meta);
   S().scalars = { ...scalarDefaultsMulti(meta.baseline_params) };
-  S().topo_rows = [{ 分组名: "纯品-1", 类型: "固体", 目标物: "多目标物1" }, { 分组名: "液体-1", 类型: "液体", 目标物: "", "Urel%": null, "C_cert": null, "U_abs": null, "定容分组": "定容组1" }];
+  S().topo_rows = [{ 分组名: "纯品-1", 类型: "固体", 目标物: "" }, { 分组名: "液体-1", 类型: "液体", 目标物: "", "Urel%": null, "C_cert": null, "U_abs": null, "定容分组": "定容组1" }];
   S().grp_params = {}; S().ding = {}; S().meas = null; S().curve_meta = {};
   const name = decodeURIComponent(location.hash.slice(1));
   if (name) {
@@ -986,7 +986,7 @@ function renderT4(meta) {
   c.appendChild(tc);
 }
 function analyteNames() {
-  // parity engine_multi.build_params_multi._show: 未勾选类型(如固体占位行"多目标物1")整流程剔除
+  // parity engine_multi.build_params_multi._show: 未勾选类型(如未使用的固体行)整流程剔除
   const sh_s = S().scalars.mu_show_solid !== false, sh_l = S().scalars.mu_show_liquid !== false;
   const out = [];
   for (const r of S().topo_rows) {
@@ -1038,8 +1038,11 @@ function excelMenu() {
 }
 async function downloadTemplate() {
   try {
+    // 未勾选的标准品类型 (mu_show_solid/liquid=false) 不进模板 (parity build_params_multi._show)
+    const sh_s = S().scalars.mu_show_solid !== false, sh_l = S().scalars.mu_show_liquid !== false;
+    const topo_rows = S().topo_rows.filter(r => (r.类型 === "固体" && sh_s) || (r.类型 === "液体" && sh_l));
     const blob = await templateMultiDownload({
-      topo_rows: S().topo_rows, curve_meta: S().curve_meta,
+      topo_rows, curve_meta: S().curve_meta,
       n_points: Number(S().scalars.mu_curve_npoints) || 3, n_reps: Number(S().scalars.mu_spike_nrep) || 2,
       n_inj_point: Number(S().scalars.mu_curve_inj) || 1, n_inj_meas: Number(S().scalars.mu_fr_inj) || 1,
     });
@@ -1088,4 +1091,4 @@ function enableDownloads(body) {
 
 // 草稿保存 (暴露给工具条)
 window.__saveDraft = async (name) => { S().currentDraft = name; await draftsMultiSave(name, toMulti(S())); };
-window.__newDraft = () => { S().scalars = { ...scalarDefaultsMulti(meta().baseline_params) }; S().topo_rows = [{ 分组名: "纯品-1", 类型: "固体", 目标物: "多目标物1" }, { 分组名: "液体-1", 类型: "液体", 目标物: "", "Urel%": null, "C_cert": null, "U_abs": null, "定容分组": "定容组1" }]; S().grp_params = {}; S().ding = {}; S().meas = null; S().curve_meta = {}; S().mu_rows = { blend: [], reag: [] }; location.hash = ""; location.reload(); };
+window.__newDraft = () => { S().scalars = { ...scalarDefaultsMulti(meta().baseline_params) }; S().topo_rows = [{ 分组名: "纯品-1", 类型: "固体", 目标物: "" }, { 分组名: "液体-1", 类型: "液体", 目标物: "", "Urel%": null, "C_cert": null, "U_abs": null, "定容分组": "定容组1" }]; S().grp_params = {}; S().ding = {}; S().meas = null; S().curve_meta = {}; S().mu_rows = { blend: [], reag: [] }; location.hash = ""; location.reload(); };
