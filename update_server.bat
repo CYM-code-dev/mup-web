@@ -9,8 +9,9 @@ set "SVC_NAME=MupWeb"
 cd /d "%PROJECT_DIR%"
 
 echo === [1/3] git pull ===
-git fetch origin
-git reset --hard origin/%BRANCH%
+git config gc.auto 0
+git -c gc.auto=0 fetch origin
+git -c gc.auto=0 reset --hard origin/%BRANCH%
 
 echo === [2/3] deps + import check ===
 .venv\Scripts\python.exe -m pip install --upgrade pip
