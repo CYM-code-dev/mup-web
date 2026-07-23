@@ -64,6 +64,40 @@ export function round_sf(x, n) {
 export function roundC(v) { return v == null || !isFinite(v) ? v : round_dp(v, Math.abs(v) < 0.1 ? 3 : 2); }
 // 浓度显示串(带尾零): <0.10→3 位小数 / ≥0.10→2 位小数 — 母液/目标浓度列 onSet 与 targetStr 共用
 export function concStr(v) { const n = Number(v); return isFinite(n) ? n.toFixed(Math.abs(n) < 0.1 ? 3 : 2) : null; }
+// 浓度按规则修约→数值: |v|<0.001 不修约(原值), <0.10→3 位 / ≥0.10→2 位 — 中间液表 母液/目标浓度计算与取均值共用
+export function concRound(v) {
+  const n = Number(v);
+  if (!isFinite(n) || n === 0) return n;
+  if (Math.abs(n) < 0.001) return n;
+  return round_dp(n, Math.abs(n) < 0.1 ? 3 : 2);
+}
+// 浓度显示串(含<0.001不修约): 不修约分支保留首位有效数字所在小数位 — 中间液表 母液/目标浓度显示
+export function concFmt(v) {
+  const n = Number(v);
+  if (!isFinite(n)) return null;
+  if (n === 0) return (0).toFixed(2);
+  const a = Math.abs(n);
+  if (a < 0.001) { const dp = Math.floor(-Math.log10(a)) + 1; return n.toFixed(dp); }
+  return n.toFixed(a < 0.1 ? 3 : 2);
+}
+// 组内浓度均值 → 修约显示串; BigInt 精确求和+半→偶修约, 避免浮点边界漂移 (与报告 Python Decimal 对齐)
+// 入参为各物质已修约的浓度值 (先修约再取均值); 浓度>0
+export function concAvgFmt(values) {
+  const vs = values.map(Number).filter(v => isFinite(v));
+  if (!vs.length) return null;
+  let S = 0n;
+  for (const v of vs) S += BigInt(Math.round(v * 1e6));   // ×1e6 精确求和 (各值≤3位小数)
+  const denom = 1000000n * BigInt(vs.length);
+  const approx = Number(S) / Number(denom);
+  if (approx === 0) return (0).toFixed(2);
+  const a = Math.abs(approx);
+  const dp = a < 0.001 ? Math.floor(-Math.log10(a)) + 1 : (a < 0.1 ? 3 : 2);
+  const pow = 10n ** BigInt(dp);
+  let qi = (S * pow) / denom, rem = (S * pow) % denom;    // 浓度>0 → 截断除法
+  if (2n * rem > denom || (2n * rem === denom && qi % 2n === 1n)) qi += 1n;  // 半→偶
+  const s = qi.toString().padStart(dp + 1, "0");
+  return s.slice(0, s.length - dp) + (dp ? "." + s.slice(s.length - dp) : "");
+}
 // 移取体积显示串: ≥1 mL→2 位 / 0.01≤v<1→3 位 (移液枪 μL 级精度, 如 0.177) / <0.01 返回 null 保留原精度 — 量器联动/手输/onSet 共用
 export function volStr(v) { const n = Number(v); if (!isFinite(n) || n < 0.01) return null; const dp = n < 1 ? 3 : 2; return round_dp(n, dp).toFixed(dp); }
 

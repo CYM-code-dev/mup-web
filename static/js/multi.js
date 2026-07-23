@@ -5,7 +5,7 @@ import { state as S, set } from './state.js';
 import { scalarDefaultsMulti, applyMulti, toMulti } from './drafts.js';
 import { createGrid } from './grid.js';
 import { kindOptions, volOptions, parseVesselNominal } from './vessel.js';
-import { concStr, volStr } from './util.js';
+import { concStr, volStr, concRound, concFmt, concAvgFmt } from './util.js';
 import { el, cardTitle, bindInput, bindSelect, bindRadio, bindCheckbox, downloadBlob, showPreview, cellSelect, cellInput, singleRowTable } from './ui.js';
 import { setupDraftUI } from './draftui.js';
 import { blendVuseKit } from './blend.js';
@@ -723,9 +723,36 @@ function liquidFolds(parent, meta) {
   wrap.appendChild(addBar); parent.appendChild(wrap);
 }
 
+// 固体目标物储备液(母液)浓度 (mg/L) = m_std(g)·纯度·1e6 / 储备液容量瓶(mL); 取自拓扑行 (单物质 solidStockConc 同源)
+function solidStockConcMg(groupName, analyteName) {
+  const r = S().topo_rows.find(r => r.类型 === "固体"
+    && (r.分组名 || "").trim() === (groupName || "").trim()
+    && (r.目标物 || "").trim() === (analyteName || "").trim());
+  if (!r) return null;
+  const m = Number(r["m_std(g)"]), p = Number(r["纯度p"]), fv = parseVesselNominal(r["储备液容量瓶(mL)"]);
+  return (m > 0 && p > 0 && fv > 0) ? (m * p * 1e6 / fv) : null;
+}
+
+// 固体组中间液混合后各物质目标浓度均值 (mg/L, 显示串) = 各源 母液浓度×移取体积/容量瓶 修约后取均值。
+// 混合中间液各物质浓度各异 → 取均值作工作液稀释链首行母液浓度的默认值 (用户可改)。
+function interAvgTargetConc(dg, sources, feeds, flasks, dgPrefix) {
+  const fNom = parseVesselNominal(flasks[dg]);
+  if (!fNom) return null;
+  const vals = sources.flatMap(src => (feeds[src] || [])
+    .filter(fd => fd.dg === dg)
+    .map(fd => {
+      const stock = solidStockConcMg(dgPrefix, src);
+      const p = Number(fd.pip_vol);
+      return (stock != null && isFinite(p) && p > 0) ? concRound(stock * p / fNom) : null;
+    }))
+    .filter(v => v != null && isFinite(v));
+  return vals.length ? concAvgFmt(vals) : null;
+}
+
 // 渲染一块中间液/工作液 (源→中间液表 + 工作液链). feeds/flasks/work 由调用方传:
 //   固体 = grp_params[gn].inter(feeds/flasks) + .work;  液体 = 共享 ding[D](feeds/flasks/work)
-function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPrefix, gridIdPrefix) {
+// isSolid: 固体组额外显示 母液浓度(逐物质) + 目标浓度(逐物质, 混合中间液中各物质各自浓度) 两列
+function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPrefix, gridIdPrefix, isSolid = false) {
   // feeds[src] 规范化为数组: 同一源可有多行移液记录; 兼容旧草稿的单对象结构
   sources.forEach(src => {
     const a = feeds[src];
@@ -737,14 +764,39 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
   if (sources.length) {
     const tbl = el("table", "grid");
     const thead = el("thead"); const trh = el("tr");
-    ["源", "中间液分组", "移液量器", "移取体积 (mL)", "中间液容量瓶", ""].forEach(t => { const th = el("th"); th.textContent = t; trh.appendChild(th); });
+    const heads = ["源", "中间液分组"];
+    if (isSolid) heads.push("母液浓度 (mg/L)");
+    heads.push("移液量器", "移取体积 (mL)", "中间液容量瓶");
+    if (isSolid) heads.push("目标浓度 (mg/L)");
+    heads.push("");
+    heads.forEach(t => { const th = el("th"); th.textContent = t; trh.appendChild(th); });
     thead.appendChild(trh); tbl.appendChild(thead);
     const tbody = el("tbody");
     // 按中间液分组(dg) 聚合源: 同 dg 排在一起 → 容量瓶合并为单一单元格; 组顺序=首次出现, 组内保源序
     // 同一源可有多行移液记录 (feeds[src] 为数组) → 展开后按 dg 聚合
     const ordered = sources.flatMap(src => feeds[src].map(fd => ({ src, fd })));
+    // 固体: 工作液稀释链首行母液浓度默认 = 中间液各物质目标浓度均值 (用户未手改时跟随; 手改后锁定); 先于中间液表读取 → 目标浓度(合并)与首行一致
+    if (isSolid) {
+      for (const dg of [...new Set(ordered.map(o => o.fd.dg))]) {
+        if (!work[dg]) work[dg] = [];
+        const wr = work[dg];
+        if (!wr.length) wr.push({});
+        const r0 = wr[0];
+        if (r0 && !r0._motherLocked) {
+          const avg = interAvgTargetConc(dg, sources, feeds, flasks, dgPrefix);
+          if (avg != null) r0["母液浓度(mg/L)"] = avg;
+        }
+      }
+    }
     [...new Set(ordered.map(o => o.fd.dg))].forEach(dg => {
       const grp = ordered.filter(o => o.fd.dg === dg);
+      // 固体: 目标浓度(合并) = 该中间液工作液稀释链首行母液浓度 (即中间液浓度, 与工作液链首行衔接)
+      let tdTarget = null;
+      if (isSolid) {
+        const wc0 = (work[dg] || [])[0];
+        const tgt = wc0 ? Number(wc0["母液浓度(mg/L)"]) : NaN;
+        tdTarget = el("td"); tdTarget.rowSpan = grp.length; tdTarget.textContent = concFmt(tgt) ?? "";
+      }
       grp.forEach(({ src, fd }, gi) => {
         const dgInp = el("input"); dgInp.type = "text"; dgInp.value = fd.dg; dgInp.placeholder = "中间液分组名";
         dgInp.onchange = () => {
@@ -775,6 +827,9 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
         const tr = el("tr");
         const tdSrc = el("td"); tdSrc.textContent = src;
         const tdDg = el("td"); tdDg.appendChild(dgInp);
+        // 固体: 母液浓度(逐物质) = m_std·纯度·1e6/储备液容量瓶
+        let tdStock = null;
+        if (isSolid) { tdStock = el("td"); tdStock.textContent = concFmt(solidStockConcMg(dgPrefix, src)) ?? ""; }
         const tdPv = el("td"); tdPv.appendChild(pipSel);
         const tdVol = el("td"); tdVol.appendChild(pv);
         // 删除按钮: 与工作液链一致 (row-del "−"); 仅剩一行时清空内容, 保留源可见
@@ -788,14 +843,18 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
           re3();
         };
         tdAct.appendChild(delBtn);
-        if (gi === 0) {   // 中间液分组(dg)名称一致 → 容量瓶合并为单一单元格 (rowspan 跨该 dg 全部行)
+        const cells = [tdSrc, tdDg];
+        if (tdStock) cells.push(tdStock);
+        cells.push(tdPv, tdVol);
+        if (gi === 0) {   // 中间液分组(dg)名称一致 → 容量瓶/目标浓度合并为单一单元格 (rowspan 跨该 dg 全部行)
           const tdFl = el("td"); tdFl.rowSpan = grp.length;
           tdFl.appendChild(vesselSelect(meta, flasks[dg] || null, v => { flasks[dg] = v; re3(); }, "flask"));
           tdFl.appendChild(interVsumNote(dg, grp, flasks));   // Σ移取体积 vs 容量瓶 (sum>flask → 装不下)
-          tr.append(tdSrc, tdDg, tdPv, tdVol, tdFl, tdAct);
-        } else {
-          tr.append(tdSrc, tdDg, tdPv, tdVol, tdAct);
+          cells.push(tdFl);
+          if (tdTarget) cells.push(tdTarget);
         }
+        cells.push(tdAct);
+        tr.append(...cells);
         tbody.appendChild(tr);
       });
     });
@@ -817,10 +876,11 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
   interDgs.forEach(dg => {
     const sub = el("div", "branch"); sub.style.marginTop = ".5rem";
     if (!work[dg]) work[dg] = [];
+    const wrows = work[dg];
+    if (!wrows.length) wrows.push({});   // 确保首行存在 (镜像 createGrid 空表补行, 供填默认)
+    for (const r of wrows) if (!("flask_vessel" in r)) r.flask_vessel = WORK_FLASK_DEFAULT;   // 初始/加载缺省 → 默认容量瓶
     const wlab = el("label"); wlab.textContent = `中间液「${dg}」→ 工作液稀释链`; wlab.style.display = "block"; sub.appendChild(wlab);
     const gh = el("div"); gh.id = `grid-work-${gridIdPrefix}-${dg}`; sub.appendChild(gh);
-    const wrows = work[dg];
-    for (const r of wrows) if (!("flask_vessel" in r)) r.flask_vessel = WORK_FLASK_DEFAULT;   // 初始/加载缺省 → 默认容量瓶
     createGrid(gh, workChainCfg(meta, wrows, () => validateWorkGrid(gh, wrows)));
     validateWorkGrid(gh, wrows);   // 初渲: 移取量器/定容量器 校验
     fold.appendChild(sub);
@@ -840,7 +900,7 @@ function interWork(parent, meta) {
   solidGroups.forEach(gn => {
     const g = gp(gn); if (!g.inter) g.inter = { feeds: {}, flasks: {} }; if (!g.work) g.work = {};
     const sources = S().topo_rows.filter(r => r.类型 === "固体" && (r.分组名 || "").trim() === gn).map(r => (r.目标物 || "").trim()).filter(Boolean);
-    renderPrepFold(parent, meta, `固体组「${gn}」中间液`, g.inter.feeds, g.inter.flasks, g.work, sources, gn, gn);
+    renderPrepFold(parent, meta, `固体组「${gn}」中间液`, g.inter.feeds, g.inter.flasks, g.work, sources, gn, gn, true);
   });
   if (!S().ding) S().ding = {};
   liqDings.forEach(D => {
@@ -851,6 +911,12 @@ function interWork(parent, meta) {
   });
 }
 const WORK_FLASK_DEFAULT = "10 mL 容量瓶(A)(±0.02)";   // 定容量器列默认值 (合法选项, 见 _FLASK_OPTS)
+// 首行母液浓度: 用户改非空 → 锁定用户值; 清空 → 解锁(回到中间液目标浓度均值默认)。仅首行受控。
+function _lockMother(r, rows) {
+  if (rows.indexOf(r) !== 0) return;
+  const v = r["母液浓度(mg/L)"];
+  r._motherLocked = (v !== null && v !== undefined && v !== "");
+}
 function workChainCfg(meta, rows, onChange) {
   const serial = !!S().scalars.mu_work_serial_dilute;   // 逐级稀释: 下行母液浓度 = 上行目标浓度 (闭包 per-chain rows)
   return {
@@ -858,9 +924,9 @@ function workChainCfg(meta, rows, onChange) {
       serial
         ? { key: "母液浓度(mg/L)", type: "text", label: "母液浓度(mg/L)", editable: r => rows.indexOf(r) === 0, computed: r => {
               const i = rows.indexOf(r);
-              return i > 0 ? rows[i - 1]["目标浓度(mg/L)"] : r["母液浓度(mg/L)"];   // row0 留空给用户输入; i>0 取上行目标浓度
-            }, onSet: r => { const s = concStr(r["母液浓度(mg/L)"]); if (s != null) r["母液浓度(mg/L)"] = s; } }
-        : { key: "母液浓度(mg/L)", type: "text", label: "母液浓度(mg/L)", onSet: r => { const s = concStr(r["母液浓度(mg/L)"]); if (s != null) r["母液浓度(mg/L)"] = s; } },
+              return i > 0 ? rows[i - 1]["目标浓度(mg/L)"] : r["母液浓度(mg/L)"];   // row0 默认中间液目标浓度均值(渲染期填入), 用户可改; i>0 取上行目标浓度
+            }, onSet: r => { _lockMother(r, rows); const s = concStr(r["母液浓度(mg/L)"]); if (s != null) r["母液浓度(mg/L)"] = s; } }
+        : { key: "母液浓度(mg/L)", type: "text", label: "母液浓度(mg/L)", onSet: r => { _lockMother(r, rows); const s = concStr(r["母液浓度(mg/L)"]); if (s != null) r["母液浓度(mg/L)"] = s; } },
       { key: "pip_vessel", type: "select", label: "移取量器", options: meta.pip_opts,
         onSet: r => { if (r.pip_vessel) { const s = volStr(parseVesselNominal(r.pip_vessel)); if (s != null) r.pip_vol = s; } } },   // 选量器 → 按标称体积自动填移取体积 (手改可覆盖)
       { key: "pip_vol", type: "number", label: "移取体积(mL)", step: "any",
@@ -1052,7 +1118,8 @@ async function downloadTemplate() {
       n_points: Number(S().scalars.mu_curve_npoints) || 3, n_reps: Number(S().scalars.mu_spike_nrep) || 2,
       n_inj_point: Number(S().scalars.mu_curve_inj) || 1, n_inj_meas: Number(S().scalars.mu_fr_inj) || 1,
     });
-    const url = URL.createObjectURL(blob); const a = el("a"); a.href = url; a.download = "多目标物模板.xlsx"; a.click(); URL.revokeObjectURL(url);
+    const _parts = [S().scalars.mu_meta_ref, S().scalars.mu_title].map(x => (x || "").trim()).filter(Boolean);
+    const url = URL.createObjectURL(blob); const a = el("a"); a.href = url; a.download = (_parts.join("_") || "不确定度评估") + ".xlsx"; a.click(); URL.revokeObjectURL(url);
   } catch (e) { alert("下载失败: " + e.message); }
 }
 function uploadTemplate() {
@@ -1067,7 +1134,7 @@ function uploadTemplate() {
 
 // ---- calc / report / 下载 ----
 function collectState() {
-  return { scalars: S().scalars, topo_rows: S().topo_rows, grp_params: S().grp_params, meas: S().meas, curve_meta: S().curve_meta, mu_rows: S().mu_rows };
+  return { scalars: S().scalars, topo_rows: S().topo_rows, grp_params: S().grp_params, ding: S().ding, meas: S().meas, curve_meta: S().curve_meta, mu_rows: S().mu_rows };
 }
 function header() { const s = S().scalars; return { Reference: s.mu_meta_ref, Date: s.mu_meta_date, "Author(s)": s.mu_meta_author }; }
 
@@ -1092,7 +1159,10 @@ function enableDownloads(body) {
     const r = await reportMulti(body);
     showPreview(r.md);
   };
-  document.getElementById("dl-docx").onclick = () => downloadBlob("/api/export/multi/docx", body, `${S().scalars.mu_analyte || "多目标物"}_不确定度评估.docx`);
+  document.getElementById("dl-docx").onclick = () => {
+    const parts = [S().scalars.mu_meta_ref, S().scalars.mu_title].map(x => (x || "").trim()).filter(Boolean);
+    downloadBlob("/api/export/multi/docx", body, (parts.join("_") || "不确定度评估") + ".docx");
+  };
 }
 
 // 草稿保存 (暴露给工具条)

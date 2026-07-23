@@ -312,6 +312,25 @@ def _merge_first_col_repeats(t):
         i = j
 
 
+def _merge_blank_trailing(t):
+    """纵向合并「有值后接连续空格」的单元格 (Markdown 合并约定: 首格填值, 续格留空)。
+    稀释流程表固体逐物质多行: 定容量器/目标浓度 首行有值、其余物质行留空 → 合并。表头(row 0)不参与。"""
+    n = len(t.rows)
+    ncols = len(t.columns)
+    for col in range(ncols):
+        i = 1
+        while i < n:
+            if t.cell(i, col).text.strip():
+                j = i + 1
+                while j < n and not t.cell(j, col).text.strip():
+                    j += 1
+                if j > i + 1:
+                    _vmerge(t, i, j - 1, col)
+                i = j
+            else:
+                i += 1
+
+
 def _keep_table_on_one_page(t):
     """整表尽量不跨页: 每行 cantSplit(行内不裂) + 非末行单元格段落 keepNext(行间不分页)。
     表本身小于一页时, Word 会把整表推到下一页而非拆开。"""
@@ -393,6 +412,7 @@ def md_to_docx(md_text, prep_flow=None, header=None, multi=False):
                     _compact_table(t, 4.8)     # 多目标物4.4 6列拟合表: 目标物列加宽4.8cm(长名如3,3'-二甲氧基联苯胺不换行), C₀/u(Q)/u_rel(Q) 按内容收窄
                 if multi and "稀释流程" in cur_caption:   # 稀释流程表: 移取体积列收窄、量器列宽
                     _size_flow_table(t)
+                    _merge_blank_trailing(t)     # 定容量器/目标浓度 空白续格纵向合并 (固体逐物质多行)
                 if multi:                       # 多目标物: 表允许跨页 + 表头跨页重复 + 全表小五
                     _allow_table_split(t)
                     _set_table_font(t, 9)

@@ -324,14 +324,29 @@ def build_params_multi(state):
     _sa_liq = _fnum(scalars.get("mu_liq_stock_alpha"))
     _work_same = scalars.get("mu_work_same_solvent", True)
     _wa_custom = _fnum(scalars.get("mu_work_alpha"))
+    # 储备液混合试剂明细 (报告 4.3.x.3.2 温度项展开 α 体积加权 blend; 镜像 engine_single:319-322)
+    def _blend_reagents(rows):
+        return [{"volume": float(r.get("vi")), "alpha": float(r.get("a")),
+                 "name": "" if r.get("s") == "自定义" else r.get("s")}
+                for r in (rows or [])
+                if r.get("vi") not in (None, "") and r.get("a") not in (None, "")]
+    _sr_solid = _blend_reagents(mu_rows.get("mu_stock_blend")) \
+        if scalars.get("mu_stock_makeup_mode") == "mixed" else None
+    _sr_liq = _blend_reagents(mu_rows.get("mu_liq_stock_blend")) \
+        if scalars.get("mu_liq_stock_makeup_mode") == "mixed" else None
     for g in groups:
         if g["kind"] == "solid":
             if _solid_bal is not None:
                 g["balance_tol_g"] = _solid_bal / 1000.0
             if _sa_solid is not None:
                 g["stock_alpha"] = _sa_solid
-        elif _sa_liq is not None:
-            g["stock_alpha"] = _sa_liq
+            if _sr_solid:
+                g["stock_reagents"] = _sr_solid
+        else:
+            if _sa_liq is not None:
+                g["stock_alpha"] = _sa_liq
+            if _sr_liq:
+                g["stock_reagents"] = _sr_liq
         g["work_same_solvent"] = _work_same
         if not _work_same and _wa_custom is not None:
             g["work_alpha"] = _wa_custom
