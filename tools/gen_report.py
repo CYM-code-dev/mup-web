@@ -417,11 +417,12 @@ def _stock_solid_detail(method, r, analyte, sec="4.3.1", multi=False):
     return L
 
 
-def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1"):
+def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=None):
     """4.3.1 储备液(高浓液标·移取+定容)明细 = √(证书浓度² + 移取浓标² + 定容²), 返回行列表.
     与纯品称量对称(纯度→证书浓度, 称量→移取浓标, 定容同)。移取浓标=吸量管允差+温度(浓标α, 不含容量瓶);
     定容=容量瓶允差(√6)+定容试剂温度(单一α/混合blend α)。证书浓度按 cert_mode 分相对/绝对式。
-    数值由 method+r 重算, r['u_stock'] 供末式对账。"""
+    数值由 method+r 重算, r['u_stock'] 供末式对账。
+    cert_variants: 混标各目标物证书(U/Urel)不同时, 代表物之外的各档 [{names,U,u_cert}] → 4.3.x.1 注明。"""
     g = lambda x: f"{x:g}"
     sq = math.sqrt
     env_temp = method.get("env_temp", 20.0)
@@ -484,15 +485,31 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1"):
     # 4.3.1.1 证书浓度
     A(f"**{sec}.1 标准品证书浓度产生的不确定度 $u_{{rel}}(c_{{s,c}})$**")
     if cert_mode == "absolute":
-        A(f"标准品证书给出标称浓度 $c_{{cert}}$={g(C_cert)}mg/L，扩展不确定度 $U$={g(U_abs)}mg/L"
-          f"（包含因子 k={kc}），换算为相对标准不确定度：")
+        if cert_variants:
+            A(f"标准品证书给出标称浓度 $c_{{cert}}$={g(C_cert)}mg/L，扩展不确定度 $U$（各目标物不尽相同，"
+              f"包含因子 k={kc}）。以 $U$={g(U_abs)}mg/L 的目标物为例，换算为相对标准不确定度：")
+        else:
+            A(f"标准品证书给出标称浓度 $c_{{cert}}$={g(C_cert)}mg/L，扩展不确定度 $U$={g(U_abs)}mg/L"
+              f"（包含因子 k={kc}），换算为相对标准不确定度：")
         A("$$ u_{rel}(c_{s,c}) = \\frac{U}{k \\cdot c_{cert}} = \\frac{" + g(U_abs)
           + "}{" + str(kc) + " \\times " + g(C_cert) + "} = " + _f(u_cert) + " $$")
     else:
-        A(f"标准品证书给出相对扩展不确定度 $U_{{rel}}$={g(Urel)}%（包含因子 k={kc}），"
-          f"换算为相对标准不确定度：")
+        if cert_variants:
+            A(f"标准品证书给出相对扩展不确定度 $U_{{rel}}$（各目标物不尽相同，包含因子 k={kc}）。"
+              f"以 $U_{{rel}}$={g(Urel)}% 的目标物为例，换算为相对标准不确定度：")
+        else:
+            A(f"标准品证书给出相对扩展不确定度 $U_{{rel}}$={g(Urel)}%（包含因子 k={kc}），"
+              f"换算为相对标准不确定度：")
         A("$$ u_{rel}(c_{s,c}) = \\frac{U_{rel}}{k \\times 100} = \\frac{" + g(Urel)
           + "}{" + str(kc) + " \\times 100} = " + _f(u_cert) + " $$")
+    if cert_variants:   # 混标其余目标物 U/Urel 不同 → 注明 (代表物已用上式展开)
+        _parts = []
+        for v in cert_variants:
+            if cert_mode == "absolute":
+                _parts.append(f"$U$={g(v['U'])}mg/L（{v['names']}）$u_{{rel}}(c_{{s,c}})={_f(v['u_cert'])}$")
+            else:
+                _parts.append(f"$U_{{rel}}$={g(v['U'])}%（{v['names']}）$u_{{rel}}(c_{{s,c}})={_f(v['u_cert'])}$")
+        A("该混标其余目标物按上式分别换算：" + "；".join(_parts) + "。")
     # 4.3.1.2 移取浓标 (吸量管允差 + 温度; 仅吸量管, 不含容量瓶)
     _sec_flask = f"{sec}.2"                    # 无 pip 时定容节水号; 有 pip 时下面覆写
     if _has_pip:
@@ -1178,7 +1195,21 @@ def render_multi(method, groups, analytes, results):
             lines.extend(_stock_solid_detail(_mr, results[_ri], analytes[_ri].get("name", ""), sec=f"4.3.{_ns}", multi=True))
         else:
             # 液体混标储备液为分组共享(同一标液), 叙述用分组(标液)名而非首目标物名
-            lines.extend(_stock_liquid_dilute_detail(_mr, results[_ri], grp["name"], sec=f"4.3.{_ns}"))
+            # 证书浓度逐物: 混标各物 U/Urel 可能不同 → 收集代表物之外的各档 (4.3.x.1 注明)
+            _cm = grp.get("cert_mode", "relative")
+            _cg, _co = {}, []
+            for i in idxs:
+                _uc = dict(results[i].get("stock_detail") or {}).get("证书浓度")
+                _key = ((analytes[i].get("C_cert"), analytes[i].get("U_abs")) if _cm == "absolute"
+                        else (analytes[i].get("Urel_cert"),))
+                if _key not in _cg:
+                    _cg[_key] = {"names": [], "U": (analytes[i].get("U_abs") if _cm == "absolute"
+                                                    else analytes[i].get("Urel_cert")), "u_cert": _uc}
+                    _co.append(_key)
+                _cg[_key]["names"].append(analytes[i].get("name", ""))
+            _cvar = ([{"names": "、".join(_cg[k]["names"]), "U": _cg[k]["U"], "u_cert": _cg[k]["u_cert"]}
+                      for k in _co[1:]] if len(_co) > 1 else None)
+            lines.extend(_stock_liquid_dilute_detail(_mr, results[_ri], grp["name"], sec=f"4.3.{_ns}", cert_variants=_cvar))
         # 储备液逐物取值表: 各物全同(液体混标共享标液/证书一致)→ 一行汇总, 略去无差异逐物表
         _srows = []
         for i in idxs:
@@ -1188,14 +1219,22 @@ def render_multi(method, groups, analytes, results):
         if len(set(_srows)) <= 1:
             A(f"本分组各目标物标准储备液配制一致，$u_{{rel}}(C_{{stock}})$ 均为 {_f(results[idxs[0]].get('u_stock'))}。")
         else:
-            A(f"本分组各目标物按自身{vary}等分别取值，储备液相对不确定度见下表：")
+            A(f"本分组各目标物按自身{vary}等分别取值，储备液相对不确定度见下表（取值相同的目标物合并为一行）：")
             nt = _tab()
             A(f"表{nt} 「{grp['name']}」储备液相对不确定度\n")
             A(f"| 目标物 | $u_{{rel}}$({src_labels[0]}) | $u_{{rel}}$({src_labels[1]}) | $u_{{rel}}$({src_labels[2]}) | $u_{{rel}}(C_{{stock}})$ |")
             A("|---|---|---|---|---|")
-            for i, (_vals, _ustock) in zip(idxs, _srows):
+            # 取值全等(各分量+Cstock)的目标物合并为同一行, 名字以「、」相连 (液体混标仅证书浓度差异时大幅减行)
+            _order, _bucket = [], {}
+            for i, key in zip(idxs, _srows):
+                if key not in _bucket:
+                    _bucket[key] = []
+                    _order.append(key)
+                _bucket[key].append(analytes[i].get("name", ""))
+            for key in _order:
+                _vals, _ustock = key
                 cells = " | ".join(_f(v) if v is not None else "—" for v in _vals)
-                A(f"| {analytes[i].get('name', '')} | {cells} | {_f(_ustock)} |")
+                A(f"| {'、'.join(_bucket[key])} | {cells} | {_f(_ustock)} |")
             A("")
         # 4.3.x.2 中间液及工作液稀释 (稀释流程表 + 量器明细表 + 合成式)
         # u_work 逐目标物: 各物 u_work 全同(无中间液混合/legacy 单链)→ 沿用旧文(保 baseline); 否则出逐物表。
