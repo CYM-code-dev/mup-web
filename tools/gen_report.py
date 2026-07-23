@@ -159,28 +159,29 @@ def _work_flow_rows_multi(grp, unit):
         return f"{v:.2f}" if v else ""
 
     rows = []
-    # feeds[src] 规范化为数组 (前端 multi.js:729); 兼容旧草稿单对象
+    # feeds[src] 规范化为数组 (前端 multi.js:729); 兼容旧草稿单对象。
+    # 多中间液: 每个 feed 各自的 dg → 各自工作液链 (旧版单 feed 单链 同构)。
     fd_raw = feeds.get(unit)
     fd_list = fd_raw if isinstance(fd_raw, list) else ([fd_raw] if fd_raw else [])
-    # 工作液链按首个有效 feed 的 dg 查一次 (同 unit 各 feed 同 dg)
-    dg = next((fd.get("dg") for fd in fd_list if fd and fd.get("dg")), None)
-    wchain = work.get(dg) or [] if dg is not None else []
-    # 中间液 (混合定容): 源单元移取 → 所在 dg 容量瓶定容
     for fd in fd_list:
-        if fd and fd.get("pip_vol") and float(fd["pip_vol"]) > 0:
-            pv = float(fd["pip_vol"])
-            fv_str = flasks.get(fd.get("dg"))
-            fv = _nominal(fv_str)
-            inter_c = wchain[0].get("母液浓度(mg/L)") if wchain else None
-            stock_c = _dilute(inter_c, fv, pv) if (inter_c is not None and fv) else None
-            rows.append(f"| {_conc(stock_c)} | {_vol(pv)} | {_strip(fd.get('pip_vessel'))} | "
-                        f"{_strip(fv_str)} | {_conc(inter_c)} |")
-    # 工作液 (串行稀释): 目标 = 母液×移取/定容
-    for s in wchain:
-        fv = _nominal(s.get("flask_vessel"))
-        tgt = _dilute(s.get("母液浓度(mg/L)"), s.get("pip_vol"), fv)
-        rows.append(f"| {_conc(s.get('母液浓度(mg/L)'))} | {_vol(s.get('pip_vol'))} | "
-                    f"{_strip(s.get('pip_vessel'))} | {_strip(s.get('flask_vessel'))} | {_conc(tgt)} |")
+        if not (fd and fd.get("pip_vol") and float(fd["pip_vol"]) > 0):
+            continue
+        pv = float(fd["pip_vol"])
+        dg = fd.get("dg")
+        fv_str = flasks.get(dg)
+        fv = _nominal(fv_str)
+        wchain = work.get(dg) or []
+        # 中间液 (混合定容): 储备液(母液)反推 → 移取 → 定容 → 中间液(=本链工作液首步母液)
+        inter_c = wchain[0].get("母液浓度(mg/L)") if wchain else None
+        stock_c = _dilute(inter_c, fv, pv) if (inter_c is not None and fv) else None
+        rows.append(f"| {_conc(stock_c)} | {_vol(pv)} | {_strip(fd.get('pip_vessel'))} | "
+                    f"{_strip(fv_str)} | {_conc(inter_c)} |")
+        # 工作液 (本 dg 串行稀释): 目标 = 母液×移取/定容
+        for s in wchain:
+            sfv = _nominal(s.get("flask_vessel"))
+            tgt = _dilute(s.get("母液浓度(mg/L)"), s.get("pip_vol"), sfv)
+            rows.append(f"| {_conc(s.get('母液浓度(mg/L)'))} | {_vol(s.get('pip_vol'))} | "
+                        f"{_strip(s.get('pip_vessel'))} | {_strip(s.get('flask_vessel'))} | {_conc(tgt)} |")
     if not rows:
         return []
     return ["| 母液浓度（mg/L） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（mg/L） |",
@@ -417,12 +418,13 @@ def _stock_solid_detail(method, r, analyte, sec="4.3.1", multi=False):
     return L
 
 
-def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=None):
+def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=None, cert_rep_names=None):
     """4.3.1 储备液(高浓液标·移取+定容)明细 = √(证书浓度² + 移取浓标² + 定容²), 返回行列表.
     与纯品称量对称(纯度→证书浓度, 称量→移取浓标, 定容同)。移取浓标=吸量管允差+温度(浓标α, 不含容量瓶);
     定容=容量瓶允差(√6)+定容试剂温度(单一α/混合blend α)。证书浓度按 cert_mode 分相对/绝对式。
     数值由 method+r 重算, r['u_stock'] 供末式对账。
-    cert_variants: 混标各目标物证书(U/Urel)不同时, 代表物之外的各档 [{names,U,u_cert}] → 4.3.x.1 注明。"""
+    cert_variants: 混标各目标物证书(U/Urel)不同时, 代表物之外的各档 [{names,U,u_cert}] → 4.3.x.1 注明。
+    cert_rep_names: 代表物所在档的目标物名串 → 「以 U=X 的目标物(…)为例」括注。"""
     g = lambda x: f"{x:g}"
     sq = math.sqrt
     env_temp = method.get("env_temp", 20.0)
@@ -484,10 +486,11 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=N
         A("$$ u_{rel}(C_{stock}) = \\sqrt{u_{rel}(c_{s,c})^{2} + u_{rel}(c_{s,V})^{2}} $$")
     # 4.3.1.1 证书浓度
     A(f"**{sec}.1 标准品证书浓度产生的不确定度 $u_{{rel}}(c_{{s,c}})$**")
+    _rep_paren = f"（{cert_rep_names}）" if (cert_variants and cert_rep_names) else ""
     if cert_mode == "absolute":
         if cert_variants:
             A(f"标准品证书给出标称浓度 $c_{{cert}}$={g(C_cert)}mg/L，扩展不确定度 $U$（各目标物不尽相同，"
-              f"包含因子 k={kc}）。以 $U$={g(U_abs)}mg/L 的目标物为例，换算为相对标准不确定度：")
+              f"包含因子 k={kc}）。以 $U$={g(U_abs)}mg/L 的目标物{_rep_paren}为例，换算为相对标准不确定度：")
         else:
             A(f"标准品证书给出标称浓度 $c_{{cert}}$={g(C_cert)}mg/L，扩展不确定度 $U$={g(U_abs)}mg/L"
               f"（包含因子 k={kc}），换算为相对标准不确定度：")
@@ -496,7 +499,7 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=N
     else:
         if cert_variants:
             A(f"标准品证书给出相对扩展不确定度 $U_{{rel}}$（各目标物不尽相同，包含因子 k={kc}）。"
-              f"以 $U_{{rel}}$={g(Urel)}% 的目标物为例，换算为相对标准不确定度：")
+              f"以 $U_{{rel}}$={g(Urel)}% 的目标物{_rep_paren}为例，换算为相对标准不确定度：")
         else:
             A(f"标准品证书给出相对扩展不确定度 $U_{{rel}}$={g(Urel)}%（包含因子 k={kc}），"
               f"换算为相对标准不确定度：")
@@ -1209,7 +1212,9 @@ def render_multi(method, groups, analytes, results):
                 _cg[_key]["names"].append(analytes[i].get("name", ""))
             _cvar = ([{"names": "、".join(_cg[k]["names"]), "U": _cg[k]["U"], "u_cert": _cg[k]["u_cert"]}
                       for k in _co[1:]] if len(_co) > 1 else None)
-            lines.extend(_stock_liquid_dilute_detail(_mr, results[_ri], grp["name"], sec=f"4.3.{_ns}", cert_variants=_cvar))
+            _rep_names = ("、".join(_cg[_co[0]]["names"]) if _cvar else None)
+            lines.extend(_stock_liquid_dilute_detail(_mr, results[_ri], grp["name"], sec=f"4.3.{_ns}",
+                                                     cert_variants=_cvar, cert_rep_names=_rep_names))
         # 储备液逐物取值表: 各物全同(液体混标共享标液/证书一致)→ 一行汇总, 略去无差异逐物表
         _srows = []
         for i in idxs:
@@ -1326,37 +1331,48 @@ def render_multi(method, groups, analytes, results):
                 _vn = f"{_exv['nominal']:g}mL{KIND_CN.get(_exv['kind'], _exv['kind'])}"
                 _tol = f"{_exv['tol']:g}"; _vu = f"{_exv['v_used']:.2f}"
                 _uml = _f(_exv["urel_ml"]); _ut = _f(_exv["urel_t"]); _uv = _f(_exv["urel"])
-                A(f"以{_vn}（{_exrole}{_vu}mL）为例{_exnfs}：")
+                # 示例量器归属 → 单个目标物名 (逐物量器取首个; 共用取代表物), 余者见上表
+                _exg = (_exv["kind"], _exv["nominal"], round(_exv["v_used"], 6))
+                if _pa and _exg in _pa:
+                    _exwho = _pa[_exg]["names"][0]
+                else:
+                    _exwho = analytes[idxs[0]].get("name", "") or "各目标物"
+                A(f"以{_exwho}使用的{_vn}（{_exrole}{_vu}mL）为例{_exnfs}：")
                 A("$$ u_{rel}(V_容) = \\frac{d}{k\\cdot V} = \\frac{" + _tol + "}{" + _exksym
                   + "\\times " + _vu + "} = " + _uml + " $$")
                 A("$$ u_{rel}(V_\\tau) = \\frac{\\alpha\\cdot\\Delta\\tau}{\\sqrt{3}} = \\frac{" + _al
                   + "\\times " + str(_dt) + "}{\\sqrt{3}} = " + _ut + " $$")
                 A("$$ u_{rel}(V) = \\sqrt{u_{rel}(V_容)^{2}+u_{rel}(V_\\tau)^{2}} = \\sqrt{" + _uml
                   + "^{2}+" + _ut + "^{2}} = " + _uv + " $$")
+            # 单目标物方和根算例: 该物中间液+工作液各量器 (n·u²) 求和 → u_rel(C_work); 无明细→False
+            def _worked(res, name):
+                exd = res.get("work_detail") or []
+                if not exd:
+                    return False
+                _terms, _uses = [], []
+                for d in exd:
+                    _u = _f(d["urel"])
+                    _terms.append(f"{d['n']}\\cdot {_u}^{{2}}" if d["n"] != 1 else f"{_u}^{{2}}")
+                    _role = "定容" if d["kind"] == "flask" else "移取"
+                    _uses.append(f"{d['n']}次{d['nominal']:g}mL{KIND_CN.get(d['kind'], d['kind'])}"
+                                 f"（{_role}{d['v_used']:.2f}mL）")
+                A(f"以{name}为例：中间液及工作液稀释过程中使用了" + "、".join(_uses)
+                  + "，各量器引入的相对不确定度按方和根合成：")
+                A("$$ u_{rel}(C_{work}) = \\sqrt{" + " + ".join(_terms)
+                  + "} = " + _f(res.get("u_work")) + " $$")
+                return True
+            _ex = next((i for i in idxs if results[i].get("work_detail")), idxs[0])
             A("多级稀释按方和根合成：")
             if _same:
-                A(f"$$ u_{{rel}}(C_{{work}}) = \\sqrt{{\\sum n_i \\cdot u_{{rel}}(V_i)^{{2}}}} = {_f(rg['u_work'])} $$")
+                # 全组 u_work 一致 → 以代表物展开算例, 注明各目标物同值
+                if not _worked(results[_ex], analytes[_ex].get("name", "")):
+                    A(f"$$ u_{{rel}}(C_{{work}}) = \\sqrt{{\\sum n_i \\cdot u_{{rel}}(V_i)^{{2}}}} = {_f(rg['u_work'])} $$")
+                else:
+                    A(f"各目标物 $u_{{rel}}(C_{{work}})$ 均为 {_f(rg['u_work'])}。")
             else:
                 A("$$ u_{rel}(C_{work}) = \\sqrt{\\sum n_i \\cdot u_{rel}(V_i)^{2}} $$")
                 A("中间液各目标物移取体积不同，$u_{rel}(C_{work})$ 逐目标物取值：")
-                # 以首个目标物为例展开明细 (各量器 u_rel(V) 已见上表, 此处代入方和根合成)
-                _ex = next((i for i in idxs if results[i].get("work_detail")), idxs[0])
-                _exd = results[_ex].get("work_detail") or []
-                if _exd:
-                    _terms = []
-                    for d in _exd:
-                        _u = _f(d["urel"])
-                        _terms.append(f"{d['n']}\\cdot {_u}^{{2}}" if d["n"] != 1 else f"{_u}^{{2}}")
-                    # 叙述: 该目标物中间液及工作液稀释过程使用的量器/次数/体积, 再按方和根合成
-                    _uses = []
-                    for d in _exd:
-                        _role = "定容" if d["kind"] == "flask" else "移取"
-                        _uses.append(f"{d['n']}次{d['nominal']:g}mL{KIND_CN.get(d['kind'], d['kind'])}"
-                                     f"（{_role}{d['v_used']:.2f}mL）")
-                    A(f"以{analytes[_ex].get('name', '')}为例：中间液及工作液稀释过程中使用了"
-                      + "、".join(_uses) + "，各量器引入的相对不确定度按方和根合成：")
-                    A("$$ u_{rel}(C_{work}) = \\sqrt{" + " + ".join(_terms)
-                      + "} = " + _f(results[_ex].get("u_work")) + " $$")
+                _worked(results[_ex], analytes[_ex].get("name", ""))
                 nt = _tab()
                 A(f"表{nt} 「{grp['name']}」各目标物工作液相对不确定度\n")
                 A("| 目标物 | $u_{rel}(C_{work})$ |")
@@ -1407,18 +1423,52 @@ def render_multi(method, groups, analytes, results):
         # 浓度: <0.001 不修约, <0.10→3位小数, ≥0.10→2位小数; 峰面积/响应比: 不修约 (整数去.0, 小数原样)
         _xfmt = lambda v: _conc_fmt(v)
         _yfmt = lambda v: str(int(v)) if float(v).is_integer() else str(v)
-        for a, r, pts in _rows44:
-            nm = a.get("name", "")
-            is_is = a.get("curve_method") == "内标法"
-            a_areas = a.get("analyte_areas") or []
-            i_areas = a.get("is_areas") or []
-            A(f"| {nm} | X (mg/L) | " + " | ".join(_xfmt(x) for x, _ in pts) + " |")
-            if is_is and a_areas and i_areas:    # 内标法: 分行显 目标物峰面积/内标峰面积 (对齐单目标物范本)
-                A(f"| {nm} | $A_x$ | " + " | ".join(_yfmt(v) for v in a_areas) + " |")
-                A(f"| {nm} | $A_{{IS}}$ | " + " | ".join(_yfmt(v) for v in i_areas) + " |")
+        # 预分组内标峰面积(相同值并为一组); 多内标时给内标目标物按表序编 T1,T2… 代号, AIS 行用代号标注
+        # 预分组: 浓度X相同的目标物并为一组(共用一行X); 内标峰面积相同并为一组; 多内标→编T1,T2…
+        _x_groups, _x_idx = [], {}
+        _is_groups, _is_idx = [], {}
+        _is_targets = set()
+        for _ti, (_a, _r, _p) in enumerate(_rows44):
+            _xk = tuple(x for x, _ in _p)
+            if _xk not in _x_idx:
+                _x_idx[_xk] = len(_x_groups); _x_groups.append([_xk, []])
+            _x_groups[_x_idx[_xk]][1].append(_ti)
+            if _a.get("curve_method") == "内标法" and (_a.get("analyte_areas")) and (_a.get("is_areas")):
+                _is_targets.add(_ti)
+                _ik = tuple(_a.get("is_areas"))
+                if _ik not in _is_idx:
+                    _is_idx[_ik] = len(_is_groups); _is_groups.append([_ik, []])
+                _is_groups[_is_idx[_ik]][1].append(_ti)
+        _tcode = {ti: f"T{n}" for n, ti in enumerate(sorted(_is_targets), 1)} if len(_is_groups) > 1 else {}
+        def _nm_of(ti):
+            n = _rows44[ti][0].get("name", "")
+            return f"{n}（{_tcode[ti]}）" if ti in _tcode else n
+        # 按浓度分组输出: 每组一行 X (单物=物名; 多物共用=各目标物/代号), 后接组内各物 Ax
+        for _xk, _tis in _x_groups:
+            if len(_tis) == 1:
+                _xlab = _nm_of(_tis[0])
+            elif len(_x_groups) == 1:
+                _xlab = "各目标物"
             else:
-                ylab = "响应比" if is_is else "$A_x$"   # 外标法峰面积=分析物峰面积 A_x (与内标法 A_x 行一致)
-                A(f"| {nm} | {ylab} | " + " | ".join(_yfmt(y) for _, y in pts) + " |")
+                _xlab = ("（" + ",".join(_tcode[t] for t in _tis) + "）") if _tcode \
+                    else "、".join(_rows44[t][0].get("name", "") for t in _tis)
+            A(f"| {_xlab} | X (mg/L) | " + " | ".join(_xfmt(x) for x in _xk) + " |")
+            for _ti in _tis:
+                a, r, pts = _rows44[_ti]
+                is_is = a.get("curve_method") == "内标法"
+                a_areas = a.get("analyte_areas") or []
+                i_areas = a.get("is_areas") or []
+                if is_is and a_areas and i_areas:    # 内标法: 目标物峰面积逐物; 内标峰面积分组→末尾合并
+                    A(f"| {_nm_of(_ti)} | $A_x$ | " + " | ".join(_yfmt(v) for v in a_areas) + " |")
+                else:
+                    ylab = "响应比" if is_is else "$A_x$"   # 外标法峰面积=分析物峰面积 A_x (与内标法 A_x 行一致)
+                    A(f"| {_nm_of(_ti)} | {ylab} | " + " | ".join(_yfmt(y) for _, y in pts) + " |")
+        # 内标峰面积: 每组末尾一行 (单组=全体共用; 多组=按目标物代号 T1,T2… 标注)
+        for _areas, _tis in _is_groups:
+            _vals = [_yfmt(v) for v in _areas] + [""] * (_max_pt - len(_areas))
+            _lab = "内标峰面积" if len(_is_groups) == 1 \
+                else "内标峰面积（" + ",".join(_tcode[ti] for ti in _tis) + "）"
+            A(f"| {_lab} | $A_{{IS}}$ | " + " | ".join(_vals) + " |")
         A("")
     # 方法学叙述 (写一次): 定义 x/y + 线性方程; Sxx/s/u(Q)/u_rel(Q) 各独占一显示行 (对齐单目标物范本,
     # 多目标物无逐物数值, 仅符号式)
