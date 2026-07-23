@@ -77,6 +77,7 @@ function renderT1() {
   bindSelect(ug, "结果修约方式", "mu_round_mode", [{ value: "有效数字", label: "有效数字" }, { value: "小数位数", label: "小数位数" }]);
   bindInput(ug, "位数", "mu_round_nd", { type: "number", attrs: { step: 1, min: 0 } });
   u.appendChild(ug);
+  const uh = el("small", "muted"); uh.textContent = "位数比标准规定多一位（AI 识别标准时已自动 +1）"; u.appendChild(uh);
 
   const env = el("div", "card"); env.append(cardTitle("测量环境"));
   const eg = el("div", "grid-2");
@@ -673,7 +674,7 @@ function liquidFolds(parent, meta) {
         if (s != null) { fl.pip_vol = s; volInp.value = s; } else fl.pip_vol = parseFloat(volInp.value);
       };
       const flSel = el("select"); const fe = el("option"); fe.value = ""; fe.textContent = "—"; flSel.appendChild(fe);
-      meta.flask_opts.forEach(o => { const op = el("option"); op.value = op.textContent = o; flSel.appendChild(op); });
+      meta.makeup_opts.forEach(o => { const op = el("option"); op.value = op.textContent = o; flSel.appendChild(op); });
       flSel.value = fl.flask_vessel || ""; flSel.onchange = () => { fl.flask_vessel = flSel.value || null; if (fl.flask_vessel) fl.flask_vol = parseVesselNominal(fl.flask_vessel); re3(); };
       const tdDg = el("td"); const dgInp = el("input"); dgInp.type = "text"; dgInp.value = dg; dgInp.placeholder = "定容分组";
       dgInp.onchange = () => {   // 改名: 全组 topo 行的定容分组 + flasks(储备液) 跟随; ding 袋(中间液/工作液)若旧名不再被引用则迁移
@@ -931,7 +932,7 @@ function workChainCfg(meta, rows, onChange) {
         onSet: r => { if (r.pip_vessel) { const s = volStr(parseVesselNominal(r.pip_vessel)); if (s != null) r.pip_vol = s; } } },   // 选量器 → 按标称体积自动填移取体积 (手改可覆盖)
       { key: "pip_vol", type: "number", label: "移取体积(mL)", step: "any",
         onSet: r => { const s = volStr(r.pip_vol); if (s != null) r.pip_vol = s; } },   // 移取体积 volStr 修约(<1mL 保留 3 位 μL 精度)
-      { key: "flask_vessel", type: "select", label: "定容量器", options: meta.flask_opts, seed: WORK_FLASK_DEFAULT },
+      { key: "flask_vessel", type: "select", label: "定容量器", options: meta.makeup_opts, seed: WORK_FLASK_DEFAULT },
       { key: "目标浓度(mg/L)", computed: r => targetStr(r["母液浓度(mg/L)"], r.pip_vol, parseVesselNominal(r.flask_vessel)) },
     ],
     rows, dynamic: true, ctx: S(), onChange,

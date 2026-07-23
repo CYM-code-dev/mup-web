@@ -36,7 +36,7 @@ VOLUMES = {
     "cylinder": [10, 50, 100, 250, 500, 1000],
     "pip_p":    [nom for (_lo, _hi, nom) in PIPETTE_RANGES],   # 移液枪档满量程 nominal (mL), 允差按满量程
 }
-_USE_GRP = {"pip_s": 0, "pip_g": 1, "pip_p": 1, "flask": 2}
+_USE_GRP = {"pip_s": 0, "pip_g": 1, "pip_p": 1, "cylinder": 1, "flask": 2}
 # 分度吸量管分度值 (mL): 选量器时判 "V 是否为分度值整数倍 (可直读)" → 优先分度吸管, 否则移液枪
 _PIP_G_SUB = {1: 0.01, 2: 0.02, 5: 0.05, 10: 0.1, 20: 0.1}
 _C_COL, _M_COL, _R_COL, _W_COL = "实测加标 C (mg/L)", "称样量 m (g)", "回收率 R", "测定值 w"
@@ -76,6 +76,8 @@ def _vessel_opts(kinds):
 
 _PIP_OPTS, _PIP_REV = _vessel_opts(("pip_s", "pip_g", "pip_p"))
 _FLASK_OPTS, _FLASK_REV = _vessel_opts(("flask",))
+# 定容量器 (稀释链定容/满刻度步): 容量瓶 + 单标/分度吸量管 + 量筒。储备液容量瓶仍用 _FLASK_OPTS(仅容量瓶)。
+_MAKEUP_OPTS, _MAKEUP_REV = _vessel_opts(("flask", "pip_s", "pip_g", "cylinder"))
 
 
 def _parse_leading_num(label):
@@ -109,19 +111,19 @@ def _resolve_pip(label):
 def _uses_from_ops(ops):
     agg = {}
     for role, label, vol in ops:
-        if role == "flask":
-            if label and label in _FLASK_REV:
-                k, nom = _FLASK_REV[label]
-                key = (k, nom, float(nom))
+        if role == "flask":                      # 定容/满刻度量器 (允许 flask/pip_s/pip_g/cylinder)
+            if label and label in _MAKEUP_REV:
+                k, nom = _MAKEUP_REV[label]
+                key = (k, nom, float(nom), "makeup")
             else:
                 continue
-        else:
+        else:                                     # 移取 (pip)
             k, nom = _resolve_pip(label) if (label and not _is_na(vol)) else (None, None)
             if k is None:
                 continue
-            key = (k, nom, float(vol))
+            key = (k, nom, float(vol), "pip")
         agg[key] = agg.get(key, 0) + 1
-    uses = [(k, vused, n, vessel_tol(k, vused, nom), nom) for (k, nom, vused), n in agg.items()]
+    uses = [(k, vused, n, vessel_tol(k, vused, nom), nom, role) for (k, nom, vused, role), n in agg.items()]
     uses.sort(key=lambda u: (_USE_GRP[u[0]], u[4], u[1]))
     return uses
 
@@ -149,10 +151,11 @@ def _dilution_chain(rows):
         if _is_na(mc) and _is_na(pv) and _is_na(tg):
             continue
         pip = _PIP_REV[pk] if (pk and pk in _PIP_REV) else (None, None)
-        fl = _FLASK_REV[fk][1] if (fk and fk in _FLASK_REV) else None
+        flk = _MAKEUP_REV[fk] if (fk and fk in _MAKEUP_REV) else (None, None)
         out.append({"母液": "" if _is_na(mc) else str(mc),
                     "体积": None if _is_na(pv) else float(pv),
-                    "pip_kind": pip[0], "pip_vol": pip[1], "flask_vol": fl,
+                    "pip_kind": pip[0], "pip_vol": pip[1],
+                    "flask_kind": flk[0], "flask_vol": flk[1],
                     "目标": "" if _is_na(tg) else str(tg)})
     return out
 

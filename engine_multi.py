@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(ROOT, "tools"))
 from uncertainty import (mup_cg248, BASELINE_PARAMS, UNIT_EXP, balance_mpe_g,  # noqa: E402
                          round_sf, round_dp, urel_stock_liquid, urel_mass,
                          urel_sample_volume)
-from engine_single import (KIND_LABELS, VOLUMES, _PIP_REV, _FLASK_REV, _resolve_pip,  # noqa: E402
+from engine_single import (KIND_LABELS, VOLUMES, _PIP_REV, _FLASK_REV, _MAKEUP_REV, _resolve_pip,  # noqa: E402
                            _uses_from_ops, _is_na, _vessels_of, _vessel_echo,
                            _ai_fill_solvent)
 import solvents  # noqa: E402
@@ -56,13 +56,13 @@ def _analyte_work_uses(group, a):
         dg = fd.get("dg")
         ops.append(("pip", fd["pip_vessel"], float(_pv)))
         fv = (inter.get("flasks") or {}).get(dg)
-        if fv in _FLASK_REV:
+        if fv in _MAKEUP_REV:
             ops.append(("flask", fv, None))
         for step in (group.get("work") or {}).get(dg) or []:
             _sv = step.get("pip_vol")
             if _sv and float(_sv) > 0 and _resolve_pip(step.get("pip_vessel"))[0] is not None:
                 ops.append(("pip", step["pip_vessel"], float(_sv)))
-                if step.get("flask_vessel") in _FLASK_REV:
+                if step.get("flask_vessel") in _MAKEUP_REV:
                     ops.append(("flask", step["flask_vessel"], None))
     return _uses_from_ops(ops) if ops else []
 
@@ -322,6 +322,8 @@ def build_params_multi(state):
     _solid_bal = _fnum(scalars.get("mu_solid_bal_mg"))
     _sa_solid = _fnum(scalars.get("mu_stock_alpha"))
     _sa_liq = _fnum(scalars.get("mu_liq_stock_alpha"))
+    _sol_solid = scalars.get("mu_stock_solvent") or ""      # 储备液定容试剂名 (报告温度项点名, 与 α 同源)
+    _sol_liq = scalars.get("mu_liq_stock_solvent") or ""
     _work_same = scalars.get("mu_work_same_solvent", True)
     _wa_custom = _fnum(scalars.get("mu_work_alpha"))
     # 储备液混合试剂明细 (报告 4.3.x.3.2 温度项展开 α 体积加权 blend; 镜像 engine_single:319-322)
@@ -342,11 +344,15 @@ def build_params_multi(state):
                 g["stock_alpha"] = _sa_solid
             if _sr_solid:
                 g["stock_reagents"] = _sr_solid
+            if _sol_solid:
+                g["stock_solvent"] = _sol_solid
         else:
             if _sa_liq is not None:
                 g["stock_alpha"] = _sa_liq
             if _sr_liq:
                 g["stock_reagents"] = _sr_liq
+            if _sol_liq:
+                g["stock_solvent"] = _sol_liq
         g["work_same_solvent"] = _work_same
         if not _work_same and _wa_custom is not None:
             g["work_alpha"] = _wa_custom

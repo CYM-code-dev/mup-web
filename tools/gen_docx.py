@@ -284,6 +284,40 @@ def _set_table_font(t, pt):
                     run.font.size = Pt(pt)
 
 
+def _set_cell_size(cell, pt):
+    """单元格内 w:r(文本) 与 m:r(OMML 公式) run 字号统设为 pt。表头 $u_rel(.)$ 是 m:r,
+    需在其内注入 w:rPr 的 w:sz/w:szCs (Word 数学 run 靠此定字号)。"""
+    from docx.shared import Pt
+    from docx.oxml import OxmlElement
+    hp = str(int(round(pt * 2)))
+    for p in cell.paragraphs:
+        for run in p.runs:                        # 普通文本 run (u_rel 数值)
+            run.font.size = Pt(pt)
+    for mr in cell._tc.findall('.//' + qn('m:r')):   # 公式 run (表头)
+        rpr = mr.find(qn('w:rPr'))
+        if rpr is None:
+            rpr = OxmlElement('w:rPr')
+            mt = mr.find(qn('m:t'))
+            (mt.addprevious(rpr) if mt is not None else mr.append(rpr))
+        for tag in ('w:sz', 'w:szCs'):
+            e = rpr.find(qn(tag))
+            if e is None:
+                e = OxmlElement(tag); rpr.append(e)
+            e.set(qn('w:val'), hp)
+
+
+def _shrink_urel_cols(t, pt):
+    """各目标物汇总表 u_rel(C/Q/f/R/W) 列缩字号 (表头公式+数值), 余列不动。
+    列布局 [目标物][u_rel 分量列…][u_rel(W)][w][U][U%][主导] → u_rel 列=第1列..倒数第5列。"""
+    if not t.rows:
+        return
+    hi = len(t.rows[0].cells) - 5
+    for row in t.rows:
+        for ci in range(1, hi + 1):
+            if ci < len(row.cells):
+                _set_cell_size(row.cells[ci], pt)
+
+
 def _vmerge(t, r1, r2, col=0):
     """纵向合并 t.cell(r1..r2, col): 首格 vMerge=restart 保留文字, 续格 vMerge=continue
     (Word/WPS 只显示首格文字)。"""
@@ -420,6 +454,8 @@ def md_to_docx(md_text, prep_flow=None, header=None, multi=False):
                     _keep_table_on_one_page(t) # 整表不跨页 (cantSplit + keepNext), 在合并前
                     if "工作液稀释" in cur_caption:   # 4.3.2 两表 (稀释流程+量器明细) → 小五(9pt)
                         _set_table_font(t, 9)
+                if "不确定度分量汇总与扩展不确定度" in cur_caption:
+                    _shrink_urel_cols(t, 8)   # u_rel(C/Q/f/R/W) 列缩字号(表头公式+数值), 余列不变
                 _merge_first_col_repeats(t)    # 首列连续相同值纵向合并 (标曲表分析物名)
             cur_caption = ""
             prev_15 = False

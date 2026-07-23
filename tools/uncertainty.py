@@ -237,10 +237,12 @@ def dilution_budget(uses, alpha=1.19e-3, dtau=5.0):
         kind, volume, n = use[0], use[1], use[2]
         tol = use[3] if len(use) > 3 and use[3] is not None else vessel_tol(kind, volume)
         nominal = use[4] if len(use) > 4 and use[4] is not None else volume
+        role = use[5] if len(use) > 5 else None           # "makeup"=定容 / "pip"=移取 (报告角色判定用)
         urel, urel_ml, urel_t = urel_glassware(kind, volume, alpha, dtau, tol=tol)
         total += n * urel ** 2
         detail.append({"kind": kind, "nominal": nominal, "v_used": volume, "n": n,
                        "tol": tol, "k": SQRT3 if kind in _GRADUATED else SQRT6,
+                       "role": role,
                        "urel_ml": urel_ml, "urel_t": urel_t, "urel": urel})
     return math.sqrt(total), detail
 

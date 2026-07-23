@@ -76,6 +76,7 @@ function renderT1() {
   bindSelect(ug, "结果修约方式", "round_mode", [{ value: "有效数字", label: "有效数字" }, { value: "小数位数", label: "小数位数" }], { on: recompSpike });
   bindInput(ug, "位数", "round_nd", { type: "number", attrs: { step: 1, min: 0 }, on: recompSpike });
   u.appendChild(ug);
+  const uh = el("small", "muted"); uh.textContent = "位数比标准规定多一位（AI 识别标准时已自动 +1）"; u.appendChild(uh);
 
   const env = el("div", "card"); env.append(cardTitle("测量环境"));
   const eg = el("div", "grid-2");
@@ -421,7 +422,7 @@ function workGridCfg(meta) {
         onSet: r => { const v = volStr(parseVesselNominal(r["移取量器"])); if (v != null) r["移取体积(mL)"] = v; } },   // 选量器→自动填满刻度体积
       { key: "移取体积(mL)", type: "number", label: "移取体积(mL)", step: "any",
         onSet: r => { const s = volStr(r["移取体积(mL)"]); if (s != null) r["移取体积(mL)"] = s; } },
-      { key: "定容量器", type: "select", label: "定容量器", options: meta.flask_opts, seed: WORK_FLASK_DEFAULT },
+      { key: "定容量器", type: "select", label: "定容量器", options: meta.makeup_opts, seed: WORK_FLASK_DEFAULT },
       { key: "目标浓度(mg/L)", label: "目标浓度(mg/L)", computed: r => targetStr(r["母液浓度(mg/L)"], r["移取体积(mL)"], parseVesselNominal(r["定容量器"])) },
     ],
     rows: S().editors.work_df, dynamic: true, ctx: S(),

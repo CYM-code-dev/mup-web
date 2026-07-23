@@ -1,9 +1,12 @@
 @echo off
 REM ============================================================
 REM  mup-web one-shot update. Copy onto the server (E:\mup-web)
-REM  and double-click / run. Git gc is disabled so the
-REM  "Unlink of file failed ... try again?" prompt can NOT hang.
-REM  Order: stop service -> pull -> deps -> start service.
+REM  and double-click / run. Order: stop service -> pull -> deps -> start.
+REM  gc.auto=0 cuts pack churn, but it does NOT by itself stop the Windows
+REM  "Unlink of file failed - try again?" prompt -- that fires during fetch
+REM  when AV / a file watcher holds a .git pack open. So fetch is wrapped:
+REM    echo n|  -> answers the prompt (skip locked file, no hang), and
+REM    4x retry + 3s wait -> rides out transient AV/watcher locks.
 REM ============================================================
 setlocal
 title mup-web update
@@ -20,9 +23,20 @@ if not defined NSSM if exist "%PROJECT_DIR%\nssm.exe" set "NSSM=%PROJECT_DIR%\ns
 echo === [0/4] stop service %SVC_NAME% (release file locks) ===
 if defined NSSM (%NSSM% stop %SVC_NAME% >nul 2>&1) else (echo     [!] nssm not found - service not managed)
 
-echo === [1/4] git pull (gc disabled - no hang) ===
+echo === [1/4] git pull (gc off; retry rides out AV/watcher locks) ===
 git config gc.auto 0
-git -c gc.auto=0 fetch origin
+set /a FETCH_TRIES=0
+:fetchretry
+set /a FETCH_TRIES+=1
+REM echo n| auto-answers "Unlink failed - try again?" -> skip the locked
+REM file (harmless orphan) so the script can't hang. Retry clears transient
+REM AV / watcher handles that hold .git packs open.
+echo n|git -c gc.auto=0 fetch origin
+if errorlevel 1 if %FETCH_TRIES% LSS 4 (
+  echo     [!] fetch attempt %FETCH_TRIES% hit a file lock, retry in 3s...
+  ping -n 4 127.0.0.1 >nul
+  goto fetchretry
+)
 git -c gc.auto=0 reset --hard origin/%BRANCH%
 
 echo === [2/4] install deps + import check ===

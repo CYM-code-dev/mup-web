@@ -25,7 +25,8 @@ from uncertainty import (mup_cg248, GLASS_TOLERANCE, BASELINE_PARAMS,  # noqa: E
                          UNIT_OPTIONS, UNIT_EXP, CONC_UNIT_OPTIONS, CONC_UNIT_EXP, PIPETTE_TOL)
 from gen_report import render, render_multi  # noqa: E402
 from engine_single import (build_params_single, KIND_LABELS, VOLUMES,  # noqa: E402
-                           _PIP_OPTS, _FLASK_OPTS, apply_ai_single, apply_ai_method, apply_trace_single)
+                           _PIP_OPTS, _FLASK_OPTS, _MAKEUP_OPTS,
+                           apply_ai_single, apply_ai_method, apply_trace_single)
 from engine_multi import build_params_multi, apply_ai_multi, _rows_to_groups  # noqa: E402
 import solvents  # noqa: E402
 import template as tmpl  # noqa: E402
@@ -82,6 +83,7 @@ def meta_constants():
         "volumes": VOLUMES,
         "pip_opts": _PIP_OPTS,          # 量器选项串 (草稿存储值, 勿在前端重构)
         "flask_opts": _FLASK_OPTS,
+        "makeup_opts": _MAKEUP_OPTS,    # 定容量器 (稀释链): 容量瓶/单标/分度吸量管/量筒
     })
 
 
