@@ -92,7 +92,7 @@ _FLOW_VESSEL = {"flask": "容量瓶", "pip_s": "单标移液管", "pip_g": "刻�
 
 def _work_flow_rows(method):
     """4.3.2 稀释流程表 markdown 行 (表头+分隔+数据), 模板表1。
-    浓度沿稀释链按首次出现顺序标 C(N)..C1 (N=去重后浓度数; 最高浓=C(N), 末级=C1)。
+    浓度按数值降序标 C(N)..C1 (N=去重后浓度数; 最高浓=C(N), 最低浓=C1), 与行输入顺序无关。
     method['work_chain']: [{母液,体积,pip_kind,pip_vol,flask_vol,目标}, ...]
     (app._dilution_chain 产出, 描述性不进计算)。空 → []。"""
     wc = method.get("work_chain") or []
@@ -104,11 +104,18 @@ def _work_flow_rows(method):
             c = (row.get(key) or "").strip()
             if c and c not in seen:
                 seen[c] = len(seen)
-    N = len(seen)
+
+    def _rank(c):
+        try:
+            return -float(c)          # 浓度降序
+        except ValueError:
+            return float("inf")       # ponytail: 非数值浓度退回首次出现序
+    order = sorted(seen, key=lambda c: (_rank(c), seen[c]))
+    num = {c: len(order) - i for i, c in enumerate(order)}
 
     def _lab(c):
         c = (c or "").strip()
-        return f"C{N - seen[c]}({c})" if c in seen else c
+        return f"C{num[c]}({c})" if c in num else c
 
     out = ["| 母液浓度（mg/L） | 移取体积（mL） | 移取量器 | 定容量器 | 目标浓度（mg/L） |",
            "|---|---|---|---|---|"]
