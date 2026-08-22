@@ -44,6 +44,15 @@ def _conc_fmt(v):
     return f"{x:.3f}" if abs(x) < 0.1 else f"{x:.2f}"
 
 
+def _volfmt(v):
+    """体积显示 (镜像 UI volStr): <0.1 mL → 3 位 (μL 精度); 0.1~1 mL 第三位小数非零 → 3 位, 为 0 → 2 位; ≥1 mL → 2 位."""
+    if v < 0.1:
+        return f"{v:.3f}"
+    if v < 1 and round(v, 3) != round(v, 2):
+        return f"{v:.3f}"
+    return f"{v:.2f}"
+
+
 def _ceil_dp(x, dp):
     """x 向上修约到 dp 位小数 (ROUND_CEILING; 不确定度只进不舍)."""
     if x is None or x == 0 or not math.isfinite(x):
@@ -130,15 +139,18 @@ def _work_flow_rows(method):
     return out
 
 
-def _work_flow_rows_multi(grp, unit):
+def _work_flow_rows_multi(grp, unit, analytes=None):
     """多目标物 4.3.2 稀释流程表: 中间液(混合定容, inter.feeds) + 工作液(串行, work) 完整链。
     grp: 标准品分组 (inter={feeds,flasks}, work={dg:[step]}); unit: 源单元(液体=ding_group/固体=目标物名)。
     母液/目标浓度 <0.10 留3位 / ≥0.10 留2位; 量器串去等级允差后缀 (A)(±…)。
-    中间液浓度=工作液首步母液(工作液自中间液起稀释), 储备液(其母液)由此反推。无中间液移取/空 → []。"""
+    中间液浓度=工作液首步母液(工作液自中间液起稀释), 储备液(其母液)由此反推。无中间液移取/空 → []。
+    inter.direct(直接稀释): work 链各行即工作液点位 — 每点位×各目标物一行, 母液=证书浓度×储备液稀释比
+    (储备液行留空=标品直用→即证书浓度; 相对式无证书浓度→用链行母液浓度), 不反推; 移取/量器/定容量器每点位首行填、余行留空 (镜像固体合并写法)。"""
     inter = grp.get("inter") or {}
     feeds = inter.get("feeds") or {}
     flasks = inter.get("flasks") or {}
     work = grp.get("work") or {}
+    direct = bool(inter.get("direct"))
 
     def _strip(s):
         s = str(s or "").split("(")[0].strip()       # ponytail: 去量器等级/允差后缀 (A)(±…)
@@ -165,9 +177,36 @@ def _work_flow_rows_multi(grp, unit):
             v = float(pv)
         except (TypeError, ValueError):
             return ""
-        return f"{v:.2f}" if v else ""
+        return _volfmt(v) if v else ""
 
     rows = []
+    if direct:
+        # 直接稀释: work 链各行即工作液点位 — 每点位×组内各目标物一行
+        # (多键为中间液时代遗留 → 与前端一致, 仅取首个含有效行的链)
+        _keys = [k for k, st in (work or {}).items() if any(s.get("pip_vol") for s in st or [])]
+        for dg_steps in ([work[_keys[0]]] if _keys else list((work or {}).values())):
+            for s in dg_steps or []:
+                pv = s.get("pip_vol")
+                fv_str = s.get("flask_vessel")
+                fv = _nominal(fv_str)
+                if not (pv and float(pv) > 0):
+                    continue
+                for gi, a in enumerate(analytes or [{}]):
+                    cc = a.get("C_cert")
+                    sfl = (grp.get("flasks") or {}).get(a.get("ding_group") or "1") or {}
+                    mother = _dilute(cc, sfl.get("pip_vol"), sfl.get("flask_vol"))
+                    if mother is None:
+                        mother = cc if cc is not None else s.get("母液浓度(mg/L)")
+                    tgt = _dilute(mother, pv, fv)
+                    nm = a.get("name", "")
+                    mcell = f"{nm}（{_conc(mother)}）" if (nm and mother is not None) else (_conc(mother) or nm)
+                    rows.append(f"| {mcell} | {_vol(pv) if gi == 0 else ''} | "
+                                f"{_strip(s.get('pip_vessel')) if gi == 0 else ''} | "
+                                f"{_strip(fv_str) if gi == 0 else ''} | {_conc(tgt)} |")
+        if not rows:
+            return []
+        return ["| 母液浓度（mg/L） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（mg/L） |",
+                "|---|---|---|---|---|"] + rows
     # feeds[src] 规范化为数组 (前端 multi.js:729); 兼容旧草稿单对象。
     # 多中间液: 每个 feed 各自的 dg → 各自工作液链 (旧版单 feed 单链 同构)。
     fd_raw = feeds.get(unit)
@@ -221,7 +260,7 @@ def _solid_inter_work_rows(grp, group_analytes):
             v = float(pv)
         except (TypeError, ValueError):
             return ""
-        return f"{v:.2f}" if v else ""
+        return _volfmt(v) if v else ""
     def _dilute(a, b, c):
         try:
             return float(a) * float(b) / float(c)
@@ -462,8 +501,9 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=N
         pnom = pv; tol_p = 0; k_pip = 0; ksym_p = ""; dist_p = ""
         p_ml = 0; p_t = 0; u_pip = 0
         _has_pip = False
-    fv = int(method["stock_flask_volume"])
-    tol_f = GLASS_TOLERANCE[("flask", fv)]
+    fv = int(method["stock_flask_volume"] or 0)             # 0 = 无储备液定容步骤(直接稀释·标品直用)
+    _has_flask = fv > 0
+    tol_f = GLASS_TOLERANCE[("flask", fv)] if _has_flask else 0
     reags = method.get("stock_reagents")
     if reags:
         alpha_s = sum(x["volume"] * x["alpha"] for x in reags) / sum(x["volume"] for x in reags)
@@ -478,9 +518,9 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=N
         u_cert = U_abs / (kc * C_cert)                      # 证书浓度 (绝对式: U/(k·C))
     else:
         u_cert = Urel / (kc * 100.0)                        # 证书浓度 (相对式: Urel/(k·100))
-    v_ml = tol_f / (sq(6) * fv)                           # 定容 容量瓶允差
+    v_ml = tol_f / (sq(6) * fv) if _has_flask else 0      # 定容 容量瓶允差
     v_t = alpha_s * dtau / sq(3)                          # 定容 温度 (定容试剂α)
-    u_sv = sq(v_ml ** 2 + v_t ** 2)                       # 定容 合成
+    u_sv = sq(v_ml ** 2 + v_t ** 2) if _has_flask else 0  # 定容 合成
     L = []
     A = L.append
     if _has_pip:
@@ -491,10 +531,15 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=N
           " + u_{rel}(c_{s,V})^{2}} $$")
         A(f"储备液的配置流程：准确用{g(pnom)}mL{KIND_CN[pk]}移取{g(pv)}mL浓标于{fv}mL容量瓶中，"
           + (f"用{solvent}定容。" if solvent else "定容。"))
-    else:
+    elif _has_flask:
         A(f"{analyte}储备液直接由高浓液标定容制得，因此其不确定度主要有两个来源：标准品证书浓度"
           f"产生的不确定度 $u_{{rel}}(c_{{s,c}})$，定容体积产生的不确定度 $u_{{rel}}(c_{{s,V}})$。")
         A("$$ u_{rel}(C_{stock}) = \\sqrt{u_{rel}(c_{s,c})^{2} + u_{rel}(c_{s,V})^{2}} $$")
+    else:
+        # 直接稀释·标品直用: 无储备液配制步骤, 工作液各点位由买来的高浓液标直接移取定容
+        A(f"{analyte}工作液各点位直接由买来的高浓液标准品移取定容制得，无单独的储备液配制步骤，"
+          f"其相对不确定度唯一来源于标准品证书浓度 $u_{{rel}}(c_{{s,c}})$。")
+        A("$$ u_{rel}(C_{stock}) = u_{rel}(c_{s,c}) $$")
     # 4.3.1.1 证书浓度
     A(f"**{sec}.1 标准品证书浓度产生的不确定度 $u_{{rel}}(c_{{s,c}})$**")
     _rep_paren = f"（{cert_rep_names}）" if (cert_variants and cert_rep_names) else ""
@@ -545,53 +590,57 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=N
         A("则移取浓标体积产生的不确定度：")
         A("$$ u_{rel}(c_{s,p}) = \\sqrt{u_{rel}(c_{s,p,容})^{2} + u_{rel}(c_{s,p,\\tau})^{2}}"
           " = \\sqrt{" + _f(p_ml) + "^{2} + " + _f(p_t) + "^{2}} = " + _f(u_pip) + " $$")
-    # 4.3.1.{2|3} 定容 (容量瓶允差 + 定容试剂温度) — 复用纯品称量 4.3.1.3 写法
-    A(f"**{_sec_flask} 定容体积产生的不确定度 $u_{{rel}}(c_{{s,V}})$**")
-    A("此相对标准不确定度的来源有两个：一是配制标准储备液使用的容量瓶允差引入的相对标准不确定度"
-      " $u_{rel}(c_{s,V容})$，二是温度变化导致定容试剂体积膨胀引入的相对标准不确定度"
-      " $u_{rel}(c_{s,Vt})$。")
-    A("$$ u_{rel}(c_{s,V}) = \\sqrt{u_{rel}(c_{s,V容})^{2} + u_{rel}(c_{s,Vt})^{2}} $$")
-    A(f"**{_sec_flask}.1 容量瓶允差引入的相对不确定度 $u_{{rel}}(c_{{s,V容}})$**")
-    A(f"根据JJG 196-2006《常用玻璃量器》规定，20℃时{fv}mL单标线容量瓶（A级，V={fv}mL）的允差"
-      f"d=±{g(tol_f)}mL，按三角分布（k=√6），则{fv}mL容量瓶体积引入的相对不确定度为：")
-    A("$$ u_{rel}(c_{s,V容}) = \\frac{d}{k \\cdot V} = \\frac{" + g(tol_f)
-      + "}{\\sqrt{6} \\times " + g(fv) + "} = " + _f(v_ml) + " $$")
-    A(f"**{_sec_flask}.2 温度变化引入的相对不确定度 $u_{{rel}}(c_{{s,Vt}})$**")
-    _sa = _sample_effective_alpha(method, r)
-    if _sa is not None and math.isclose(_sa, alpha_s, rel_tol=1e-9):
-        # 温度项与样液定容(4.2.2)一致: 只引用 + 取值, 不重复 α·Δτ/√3 推导
-        A(f"假定实验室的温度变化在（{env_temp:g}±{dtau:g}）℃（∆τ={dtau:g}），温度变化为均匀分布。"
-          f"本步定容试剂与样液定容一致，温度变化引入的相对不确定度的评定详见 4.2.2（样液定容温度项），"
-          f"$u_{{rel}}(c_{{s,Vt}})={_f(v_t)}$。")
-    else:
-        if reags:
-            _alab = lambda x: x.get("name") or f"{x['volume']:g}mL试剂"
-            _alpha_list = "、".join(f"{_alab(x)} α={_sci_t(x['alpha'])}/℃" for x in reags)
-            blend_terms = " + ".join(f"{g(x['volume'])}\\times{_sci_l(x['alpha'])}" for x in reags)
+    # 4.3.1.{2|3} 定容 (容量瓶允差 + 定容试剂温度) — 复用纯品称量 4.3.1.3 写法; 无定容步骤(直接稀释·标品直用)则整节约去
+    if _has_flask:
+        A(f"**{_sec_flask} 定容体积产生的不确定度 $u_{{rel}}(c_{{s,V}})$**")
+        A("此相对标准不确定度的来源有两个：一是配制标准储备液使用的容量瓶允差引入的相对标准不确定度"
+          " $u_{rel}(c_{s,V容})$，二是温度变化导致定容试剂体积膨胀引入的相对标准不确定度"
+          " $u_{rel}(c_{s,Vt})$。")
+        A("$$ u_{rel}(c_{s,V}) = \\sqrt{u_{rel}(c_{s,V容})^{2} + u_{rel}(c_{s,Vt})^{2}} $$")
+        A(f"**{_sec_flask}.1 容量瓶允差引入的相对不确定度 $u_{{rel}}(c_{{s,V容}})$**")
+        A(f"根据JJG 196-2006《常用玻璃量器》规定，20℃时{fv}mL单标线容量瓶（A级，V={fv}mL）的允差"
+          f"d=±{g(tol_f)}mL，按三角分布（k=√6），则{fv}mL容量瓶体积引入的相对不确定度为：")
+        A("$$ u_{rel}(c_{s,V容}) = \\frac{d}{k \\cdot V} = \\frac{" + g(tol_f)
+          + "}{\\sqrt{6} \\times " + g(fv) + "} = " + _f(v_ml) + " $$")
+        A(f"**{_sec_flask}.2 温度变化引入的相对不确定度 $u_{{rel}}(c_{{s,Vt}})$**")
+        _sa = _sample_effective_alpha(method, r)
+        if _sa is not None and math.isclose(_sa, alpha_s, rel_tol=1e-9):
+            # 温度项与样液定容(4.2.2)一致: 只引用 + 取值, 不重复 α·Δτ/√3 推导
             A(f"假定实验室的温度变化在（{env_temp:g}±{dtau:g}）℃（∆τ={dtau:g}），温度变化为均匀分布。"
-              f"各试剂的体积膨胀系数：{_alpha_list}。混合试剂由各试剂按体积混合，其膨胀系数 α 为各试剂 αi 按体积加权：")
-            A("$$ \\alpha = \\frac{" + blend_terms + "}{" + g(sum(x["volume"] for x in reags))
-              + "} = " + _sci_l(alpha_s) + "/℃ $$")
-            A("按均匀分布，k=√3，则温度变化引入的相对不确定度为：")
+              f"本步定容试剂与样液定容一致，温度变化引入的相对不确定度的评定详见 4.2.2（样液定容温度项），"
+              f"$u_{{rel}}(c_{{s,Vt}})={_f(v_t)}$。")
         else:
-            sol_w = f"定容试剂（{solvent}）" if solvent else "定容试剂"
-            A(f"假定实验室的温度变化在（{env_temp:g}±{dtau:g}）℃（∆τ={dtau:g}），温度变化为均匀分布。"
-              f"{sol_w}膨胀系数α为{_sci_t(alpha_s)}/℃，按均匀分布，k=√3，则温度变化引入的相对不确定度为：")
-        A("$$ u_{rel}(c_{s,Vt}) = \\frac{\\alpha \\cdot \\Delta\\tau \\cdot V}{\\sqrt{3} \\cdot V}"
-          " = \\frac{" + _sci_l(alpha_s) + " \\times " + g(dtau) + " \\times " + g(fv)
-          + "}{\\sqrt{3} \\times " + g(fv) + "} = " + _f(v_t) + " $$")
-    A("则定容体积产生的不确定度：")
-    A("$$ u_{rel}(c_{s,V}) = \\sqrt{u_{rel}(c_{s,V容})^{2} + u_{rel}(c_{s,Vt})^{2}}"
-      " = \\sqrt{" + _f(v_ml) + "^{2} + " + _f(v_t) + "^{2}} = " + _f(u_sv) + " $$")
+            if reags:
+                _alab = lambda x: x.get("name") or f"{x['volume']:g}mL试剂"
+                _alpha_list = "、".join(f"{_alab(x)} α={_sci_t(x['alpha'])}/℃" for x in reags)
+                blend_terms = " + ".join(f"{g(x['volume'])}\\times{_sci_l(x['alpha'])}" for x in reags)
+                A(f"假定实验室的温度变化在（{env_temp:g}±{dtau:g}）℃（∆τ={dtau:g}），温度变化为均匀分布。"
+                  f"各试剂的体积膨胀系数：{_alpha_list}。混合试剂由各试剂按体积混合，其膨胀系数 α 为各试剂 αi 按体积加权：")
+                A("$$ \\alpha = \\frac{" + blend_terms + "}{" + g(sum(x["volume"] for x in reags))
+                  + "} = " + _sci_l(alpha_s) + "/℃ $$")
+                A("按均匀分布，k=√3，则温度变化引入的相对不确定度为：")
+            else:
+                sol_w = f"定容试剂（{solvent}）" if solvent else "定容试剂"
+                A(f"假定实验室的温度变化在（{env_temp:g}±{dtau:g}）℃（∆τ={dtau:g}），温度变化为均匀分布。"
+                  f"{sol_w}膨胀系数α为{_sci_t(alpha_s)}/℃，按均匀分布，k=√3，则温度变化引入的相对不确定度为：")
+            A("$$ u_{rel}(c_{s,Vt}) = \\frac{\\alpha \\cdot \\Delta\\tau \\cdot V}{\\sqrt{3} \\cdot V}"
+              " = \\frac{" + _sci_l(alpha_s) + " \\times " + g(dtau) + " \\times " + g(fv)
+              + "}{\\sqrt{3} \\times " + g(fv) + "} = " + _f(v_t) + " $$")
+        A("则定容体积产生的不确定度：")
+        A("$$ u_{rel}(c_{s,V}) = \\sqrt{u_{rel}(c_{s,V容})^{2} + u_{rel}(c_{s,Vt})^{2}}"
+          " = \\sqrt{" + _f(v_ml) + "^{2} + " + _f(v_t) + "^{2}} = " + _f(u_sv) + " $$")
     A(f"故配制标准储备液（{cert_rep_names or analyte}）引入的相对不确定度：")
     if _has_pip:
         A("$$ u_{rel}(C_{stock}) = \\sqrt{u_{rel}(c_{s,c})^{2} + u_{rel}(c_{s,p})^{2}"
           " + u_{rel}(c_{s,V})^{2}} = \\sqrt{" + _f(u_cert) + "^{2} + " + _f(u_pip) + "^{2} + "
           + _f(u_sv) + "^{2}} = " + _f(r["u_stock"]) + " $$")
-    else:
+    elif _has_flask:
         A("$$ u_{rel}(C_{stock}) = \\sqrt{u_{rel}(c_{s,c})^{2} + u_{rel}(c_{s,V})^{2}}"
           " = \\sqrt{" + _f(u_cert) + "^{2} + " + _f(u_sv) + "^{2}} = "
           + _f(r["u_stock"]) + " $$")
+    else:
+        A("$$ u_{rel}(C_{stock}) = u_{rel}(c_{s,c}) = " + _f(u_cert)
+          + " = " + _f(r["u_stock"]) + " $$")
     return L
 
 
@@ -916,7 +965,8 @@ def render(method, r):
         A("|---|---|---|---|---|---|---|---|")
         for d in wd:
             ksym = "\\sqrt{3}" if d["kind"] in _GRADUATED else "\\sqrt{6}"
-            A(f"| {d['nominal']:g}mL{KIND_CN.get(d['kind'], d['kind'])} | {d['v_used']:.2f} | {d['n']} | "
+            _vu = _volfmt(d["v_used"])
+            A(f"| {d['nominal']:g}mL{KIND_CN.get(d['kind'], d['kind'])} | {_vu} | {d['n']} | "
               f"{d['tol']:g} | ${ksym}$ | {_f(d['urel_ml'])} | {_f(d['urel_t'])} | {_f(d['urel'])} |")
         A("")
         A("其中允差按量器类型取分布（容量瓶/单标线吸量管三角分布√6，分度吸量管均匀分布√3）；"
@@ -1116,6 +1166,21 @@ _NAME_CN = {"m": "样品称量", "V": "样液定容", "C": "标液配制",
             "Q": "曲线拟合", "f": "重复性", "R": "回收率"}
 
 
+def _pip_kind_from_label(label):
+    """量器选项串 → (kind, 标称mL)。现版 UI 的 flasks[dg] 只写 pip_vessel (pip_kind 恒 null),
+    按串名判型/取前导数 — 与 engine_single._vessel_opts 生成的 (kind, 满量程) 一致。"""
+    if not label:
+        return (None, None)
+    s = str(label)
+    kind = ("pip_p" if "移液枪" in s else "pip_s" if "单标吸量管" in s else
+            "pip_g" if "分度吸量管" in s else "cylinder" if "量筒" in s else None)
+    try:
+        nom = float(s.split(" mL")[0])
+    except ValueError:
+        nom = None
+    return (kind, nom)
+
+
 def _stock_method_for_analyte(method, grp, a):
     """多目标物: 为目标物 a (所属分组 grp) 合并出 _stock_solid_detail / _stock_liquid_dilute_detail
     所读的 method 视图 (方法级 + 分组共享 + 目标物级)。键名与 app._build_params /
@@ -1127,15 +1192,16 @@ def _stock_method_for_analyte(method, grp, a):
         dg = a.get("ding_group") or "1"
         fl = (grp.get("flasks") or {}).get(dg) or \
             {k: grp.get(k) for k in ("pip_kind", "pip_vol", "pip_nominal", "flask_vol")}
+        _pk, _pnom = _pip_kind_from_label(fl.get("pip_vessel"))   # UI 只写 pip_vessel → 串名判型 (legacy pip_kind 优先)
         m.update({
             "k_cert": a.get("k_cert") or grp.get("k_cert"),
             "cert_mode": grp.get("cert_mode", "relative"),
             "Urel_cert": a.get("Urel_cert", 0.0),
             "C_cert": a.get("C_cert") or grp.get("C_cert"),
             "U_abs": a.get("U_abs") or grp.get("U_abs"),
-            "pip_kind": fl.get("pip_kind") or "",
+            "pip_kind": fl.get("pip_kind") or _pk or "",
             "pip_vol": fl.get("pip_vol") or 0,
-            "pip_nominal": fl.get("pip_nominal") or None,
+            "pip_nominal": fl.get("pip_nominal") or _pnom,
             "stock_flask_volume": fl.get("flask_vol") or 0,
         })
     else:   # solid
@@ -1265,9 +1331,11 @@ def render_multi(method, groups, analytes, results):
         # 稀释流程表 (描述性): 中间液(混合定容)+工作液(串行) 完整链, 置量器明细表前
         # 稀释流程表 (描述性): 固体逐物质多行(母液浓度按纯度/m_std算, 目标浓度取均值); 液体按分组单链
         _flow = _solid_inter_work_rows(grp, [analytes[i] for i in idxs]) if kind == "solid" \
-            else _work_flow_rows_multi(grp, analytes[idxs[0]].get("group"))
+            else _work_flow_rows_multi(grp, analytes[idxs[0]].get("group"), [analytes[i] for i in idxs])
         if _flow:
-            A("中间液及工作液由标准储备液经多级稀释制得，各级稀释的母液浓度、移取体积与量器、定容量器及目标浓度见下表：")
+            A("工作液各点位由买来的高浓标准品（储备液）直接稀释制得（非逐级），各点位母液浓度、移取体积与量器、"
+              "定容量器及目标浓度见下表：" if (grp.get("inter") or {}).get("direct") else
+              "中间液及工作液由标准储备液经多级稀释制得，各级稀释的母液浓度、移取体积与量器、定容量器及目标浓度见下表：")
             nt = _tab()
             A(f"表{nt} 「{grp['name']}」中间液及工作液稀释流程\n")
             for _ln in _flow:
@@ -1297,7 +1365,7 @@ def render_multi(method, groups, analytes, results):
                             _pa[_g]["names"].append(_nm)
             def _vrow(d, lead=None):
                 _ksym = "\\sqrt{3}" if d["kind"] in _GRADUATED else "\\sqrt{6}"
-                _cells = [f"{d['nominal']:g}mL{KIND_CN.get(d['kind'], d['kind'])}", f"{d['v_used']:.2f}",
+                _cells = [f"{d['nominal']:g}mL{KIND_CN.get(d['kind'], d['kind'])}", _volfmt(d["v_used"]),
                           str(d["n"]), f"{d['tol']:g}", f"${_ksym}$",
                           _f(d["urel_ml"]), _f(d["urel_t"]), _f(d["urel"])]
                 if lead is not None:
@@ -1337,12 +1405,12 @@ def render_multi(method, groups, analytes, results):
                 _exv = max(wd, key=lambda d: d["urel"])
                 _exksym = "\\sqrt{3}" if _exv["kind"] in _GRADUATED else "\\sqrt{6}"
                 _exrole = "定容" if _exv.get("role") == "makeup" else "移取"
-                _exnfs = (f"（非满刻度：允差按标称{_exv['nominal']:g}mL查表、体积按实际{_exv['v_used']:.2f}mL计）"
+                _exnfs = (f"（非满刻度：允差按标称{_exv['nominal']:g}mL查表、体积按实际{_volfmt(_exv['v_used'])}mL计）"
                           if _exv["kind"] == "pip_g" and abs(_exv["v_used"] - _exv["nominal"]) > 1e-9 else "")
                 _al = _sci_l(rg.get("work_alpha", rg.get("alpha", 1.19e-3)))
                 _dt = rg.get("dtau", 5)
                 _vn = f"{_exv['nominal']:g}mL{KIND_CN.get(_exv['kind'], _exv['kind'])}"
-                _tol = f"{_exv['tol']:g}"; _vu = f"{_exv['v_used']:.2f}"
+                _tol = f"{_exv['tol']:g}"; _vu = _volfmt(_exv["v_used"])
                 _uml = _f(_exv["urel_ml"]); _ut = _f(_exv["urel_t"]); _uv = _f(_exv["urel"])
                 # 示例量器归属 → 单个目标物名 (逐物量器取首个; 共用取代表物), 余者见上表
                 _exg = (_exv["kind"], _exv["nominal"], round(_exv["v_used"], 6))
@@ -1369,8 +1437,9 @@ def render_multi(method, groups, analytes, results):
                 for d in exd:
                     _role = "定容" if d.get("role") == "makeup" else "移取"
                     _uses.append(f"{d['n']}次{d['nominal']:g}mL{KIND_CN.get(d['kind'], d['kind'])}"
-                                 f"（{_role}{d['v_used']:.2f}mL）")
-                A(f"以{name}为例：中间液及工作液稀释过程中使用了" + "、".join(_uses)
+                                 f"（{_role}{_volfmt(d['v_used'])}mL）")
+                _proc_w = "工作液直接稀释" if (grp.get("inter") or {}).get("direct") else "中间液及工作液稀释"
+                A(f"以{name}为例：{_proc_w}过程中使用了" + "、".join(_uses)
                   + "，各量器引入的相对不确定度按方和根合成：")
                 if len(_rows) > 4:
                     # ponytail: 项数多时居中 $$ 块公式溢出 Word 页宽 → 改普通段落左对齐 + 内联 $..$

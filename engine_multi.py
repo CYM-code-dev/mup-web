@@ -39,6 +39,20 @@ def _analyte_work_uses(group, a):
     """多目标物逐目标物装配稀释 uses 列表 (喂 dilution_budget)。opt-in: 本物无有效中间液移取 → [] → u_work=0。"""
     inter = group.get("inter") or {}
     feeds = inter.get("feeds") or {}
+    if inter.get("direct"):
+        # 直接稀释: 无中间液 — work 链各行即工作液点位 (母液=储备液/标品), feeds 不参与
+        # (多键为中间液时代遗留 → 与前端/报告一致, 仅取首个含有效行的链)
+        _w = group.get("work") or {}
+        _keys = [k for k, st in _w.items() if any(s.get("pip_vol") for s in st or [])]
+        ops = []
+        for steps in ([_w[_keys[0]]] if _keys else list(_w.values())):
+            for step in steps or []:
+                _sv = step.get("pip_vol")
+                if _sv and float(_sv) > 0 and _resolve_pip(step.get("pip_vessel"))[0] is not None:
+                    ops.append(("pip", step["pip_vessel"], float(_sv)))
+                    if step.get("flask_vessel") in _MAKEUP_REV:
+                        ops.append(("flask", step["flask_vessel"], None))
+        return _uses_from_ops(ops) if ops else []
     if group.get("kind") == "liquid":
         _unit = (a.get("group") or "").strip()        # 中间液/工作液按定容分组共享 → feeds 改按分组名键
     else:
@@ -151,7 +165,7 @@ def _build_params(method, group, a):
             U_abs=a.get("U_abs") or group.get("U_abs"),
             pip_nominal=_pnom or fl.get("pip_nominal"))
     _inter = group.get("inter")
-    if _inter and _inter.get("feeds"):
+    if _inter and (_inter.get("feeds") or _inter.get("direct")):
         _uses_a = _analyte_work_uses(group, a)
         if _uses_a:
             p["work_uses"] = _uses_a

@@ -99,7 +99,7 @@ export function concAvgFmt(values) {
   return s.slice(0, s.length - dp) + (dp ? "." + s.slice(s.length - dp) : "");
 }
 // 移取体积显示串: ≥1 mL→2 位 / 0.01≤v<1→3 位 (移液枪 μL 级精度, 如 0.177) / <0.01 返回 null 保留原精度 — 量器联动/手输/onSet 共用
-export function volStr(v) { const n = Number(v); if (!isFinite(n) || n < 0.01) return null; const dp = n < 1 ? 3 : 2; return round_dp(n, dp).toFixed(dp); }
+export function volStr(v) { const n = Number(v); if (!isFinite(n) || n < 0.01) return null; const dp = (n < 0.1 || (n < 1 && round_dp(n, 3) !== round_dp(n, 2))) ? 3 : 2; return round_dp(n, dp).toFixed(dp); }
 
 // 有效数字显示串: n 位有效数字 (银行家修约 round_sf + 补尾零, 展开科学计数)
 function sfStr(v, n) {

@@ -753,7 +753,9 @@ function interAvgTargetConc(dg, sources, feeds, flasks, dgPrefix) {
 // 渲染一块中间液/工作液 (源→中间液表 + 工作液链). feeds/flasks/work 由调用方传:
 //   固体 = grp_params[gn].inter(feeds/flasks) + .work;  液体 = 共享 ding[D](feeds/flasks/work)
 // isSolid: 固体组额外显示 母液浓度(逐物质) + 目标浓度(逐物质, 混合中间液中各物质各自浓度) 两列
-function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPrefix, gridIdPrefix, isSolid = false) {
+// direct: 液体组「直接稀释」— feeds 表即工作液点位表(点位瓶=最终工作液), 不渲染下方工作液链
+// titleRight: 追加到标题行右端的元素 (液体组: 直接稀释复选框)
+function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPrefix, gridIdPrefix, isSolid = false, direct = false, titleRight = null) {
   // feeds[src] 规范化为数组: 同一源可有多行移液记录; 兼容旧草稿的单对象结构
   sources.forEach(src => {
     const a = feeds[src];
@@ -761,13 +763,17 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
     else if (!Array.isArray(a)) feeds[src] = [a];
     feeds[src].forEach(fd => { if (!fd.dg) fd.dg = `${dgPrefix}-中`; });
   });
-  const fold = el("div", "branch"); fold.append(cardTitle(title));
-  if (sources.length) {
+  const fold = el("div", "branch");
+  const _title = cardTitle(title);
+  if (titleRight) { _title.style.cssText = "display:flex;justify-content:flex-start;align-items:center;gap:.6rem"; _title.appendChild(titleRight); }
+  fold.append(_title);
+  // direct: 无中间液 → 隐藏中间液(feeds)表, 仅渲染工作液点位链 (feeds 数据保留, 取消勾选后恢复)
+  if (sources.length && !direct) {
     const tbl = el("table", "grid");
     const thead = el("thead"); const trh = el("tr");
-    const heads = ["源", "中间液分组"];
+    const heads = ["源", direct ? "点位" : "中间液分组"];
     if (isSolid) heads.push("母液浓度 (mg/L)");
-    heads.push("移液量器", "移取体积 (mL)", "中间液容量瓶");
+    heads.push("移液量器", "移取体积 (mL)", direct ? "点位容量瓶" : "中间液容量瓶");
     if (isSolid) heads.push("目标浓度 (mg/L)");
     heads.push("");
     heads.forEach(t => { const th = el("th"); th.textContent = t; trh.appendChild(th); });
@@ -799,7 +805,7 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
         tdTarget = el("td"); tdTarget.rowSpan = grp.length; tdTarget.textContent = concFmt(tgt) ?? "";
       }
       grp.forEach(({ src, fd }, gi) => {
-        const dgInp = el("input"); dgInp.type = "text"; dgInp.value = fd.dg; dgInp.placeholder = "中间液分组名";
+        const dgInp = el("input"); dgInp.type = "text"; dgInp.value = fd.dg; dgInp.placeholder = direct ? "点位名" : "中间液分组名";
         dgInp.onchange = () => {
           const old = fd.dg, next = dgInp.value;
           if (old && next && old !== next) {   // 改名迁移: 工作液链 + 中间液容量瓶 跟随新分组名, 不再孤立
@@ -873,16 +879,27 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
   }
   // 工作液稀释链(每个中间液分组一条, 可多级); 容量瓶已在源表按中间液分组绑定
   // 工作液链按当前 sources 的 dg 渲染 (不扫全部 feeds → 改名/删行遗留的孤儿 feed 不再凭空多生一条链)
-  const interDgs = [...new Set(sources.flatMap(src => feeds[src].map(fd => fd.dg)).filter(Boolean))];
+  // direct: work 链各行即工作液点位 (母液=储备液/标品); 每定容分组仅一条点位链
+  // (多键为中间液时代遗留 → 取首个含有效行的键, 其余数据保留, 取消勾选后恢复)
+  let interDgs = [...new Set(sources.flatMap(src => feeds[src].map(fd => fd.dg)).filter(Boolean))];
+  if (direct) {
+    const _keys = Object.keys(work).filter(dg => (work[dg] || []).some(r => r && (r.pip_vol || r["母液浓度(mg/L)"])));
+    interDgs = [_keys[0] || Object.keys(work)[0] || `${dgPrefix}-工`];
+  }
   interDgs.forEach(dg => {
     const sub = el("div", "branch"); sub.style.marginTop = ".5rem";
     if (!work[dg]) work[dg] = [];
     const wrows = work[dg];
     if (!wrows.length) wrows.push({});   // 确保首行存在 (镜像 createGrid 空表补行, 供填默认)
     for (const r of wrows) if (!("flask_vessel" in r)) r.flask_vessel = WORK_FLASK_DEFAULT;   // 初始/加载缺省 → 默认容量瓶
-    const wlab = el("label"); wlab.textContent = `中间液「${dg}」→ 工作液稀释链`; wlab.style.display = "block"; sub.appendChild(wlab);
+    // 链标题附源分组名 (液体: 定容分组跨组共享, 光看中间液分组名不知道源是哪几个液体组; 固体组折叠标题已含组名)
+    const _feeders = isSolid ? [] : sources.filter(src => feeds[src].some(fd => fd.dg === dg));
+    const _flab = _feeders.length ? `（分组：${_feeders.join("、")}）` : "";
+    const wlab = el("label");
+    wlab.textContent = direct ? `储备液/标品 → 工作液点位（直接稀释）` : `中间液「${dg}」${_flab}→ 工作液稀释链`;
+    wlab.style.display = "block"; sub.appendChild(wlab);
     const gh = el("div"); gh.id = `grid-work-${gridIdPrefix}-${dg}`; sub.appendChild(gh);
-    createGrid(gh, workChainCfg(meta, wrows, () => validateWorkGrid(gh, wrows)));
+    createGrid(gh, workChainCfg(meta, wrows, () => validateWorkGrid(gh, wrows), direct));
     validateWorkGrid(gh, wrows);   // 初渲: 移取量器/定容量器 校验
     fold.appendChild(sub);
   });
@@ -908,7 +925,15 @@ function interWork(parent, meta) {
     const prep = S().ding[D] || (S().ding[D] = { feeds: {}, flasks: {}, work: {} });
     prep.feeds = prep.feeds || {}; prep.flasks = prep.flasks || {}; prep.work = prep.work || {};
     const groupsInD = [...new Set(S().topo_rows.filter(r => r.类型 === "液体" && (r.定容分组 || "定容组1") === D).map(r => (r.分组名 || "").trim()).filter(Boolean))];
-    renderPrepFold(parent, meta, `液体组「${D}」中间液`, prep.feeds, prep.flasks, prep.work, groupsInD, D, `ding-${D}`);
+    // 直接稀释: 高浓标品(或其储备液)直接稀释到工作液各点位, 无中间液 — feeds 表即点位表
+    const dirChk = el("input"); dirChk.type = "checkbox"; dirChk.checked = !!prep.direct;
+    dirChk.onchange = () => { prep.direct = dirChk.checked; re3(); };
+    const dirLab = el("label"); dirLab.style.cssText = "display:inline-flex;align-items:center;font-weight:normal;font-size:.85rem;white-space:nowrap";
+    dirLab.append(dirChk, document.createTextNode(" 无中间液"));
+    // 标题附分组名: 定容分组跨组共享, 光看「定容组N」不知道是哪几个液体组
+    const _srcLab = groupsInD.length ? `（分组：${groupsInD.join("、")}）` : "";
+    renderPrepFold(parent, meta, prep.direct ? `液体组「${D}」${_srcLab}工作液点位（直接稀释）` : `液体组「${D}」${_srcLab}中间液`,
+      prep.feeds, prep.flasks, prep.work, groupsInD, D, `ding-${D}`, false, !!prep.direct, dirLab);
   });
 }
 const WORK_FLASK_DEFAULT = "10 mL 容量瓶(A)(±0.02)";   // 定容量器列默认值 (合法选项, 见 _FLASK_OPTS)
@@ -918,8 +943,8 @@ function _lockMother(r, rows) {
   const v = r["母液浓度(mg/L)"];
   r._motherLocked = (v !== null && v !== undefined && v !== "");
 }
-function workChainCfg(meta, rows, onChange) {
-  const serial = !!S().scalars.mu_work_serial_dilute;   // 逐级稀释: 下行母液浓度 = 上行目标浓度 (闭包 per-chain rows)
+function workChainCfg(meta, rows, onChange, parallel = false) {
+  const serial = !!S().scalars.mu_work_serial_dilute && !parallel;   // 逐级稀释: 下行母液浓度 = 上行目标浓度 (闭包 per-chain rows); 直接稀释强制非逐级 (各行同母液)
   return {
     columns: [
       serial
