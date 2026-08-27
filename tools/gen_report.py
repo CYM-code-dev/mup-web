@@ -16,7 +16,8 @@ import sys
 from decimal import Decimal, ROUND_CEILING
 
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
-from uncertainty import mup_cg248, recovery, GLASS_TOLERANCE, _GRADUATED, round_sf, fmt_result, vessel_tol  # noqa: E402
+from uncertainty import (mup_cg248, recovery, GLASS_TOLERANCE, _GRADUATED, round_sf,  # noqa: E402
+                         fmt_result, vessel_tol, CIN_UNIT_EXP)
 
 
 def _f(x, nd=4):
@@ -645,13 +646,15 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=N
 
 
 # 结果单位相对基准 (C·V/m ⇒ mg/kg) 的换算因子 = 10 的幂 (仅 display 层; 引擎无量纲不依赖)
-_UNIT_EXP = {"mg/kg": 0, "µg/kg": 3, "g/kg": -3, "%": -4}
+# µg/g ≡ mg/kg (指数 0)。镜像 uncertainty.UNIT_EXP (display 层手抄副本)。
+_UNIT_EXP = {"mg/kg": 0, "µg/kg": 3, "g/kg": -3, "µg/g": 0, "%": -4}
 
 
-def _model_latex(unit):
-    """测量模型 LaTeX: 基准 w=C·V/m; 非基准单位附 ×10^n 换算因子 (g/kg→×10⁻³ 等)。"""
+def _model_latex(unit, conc_unit="mg/L"):
+    """测量模型 LaTeX: 基准 w=C·V/m; 合成指数 = 结果单位 exp + 样液浓度归一 exp (非 0 时附 ×10^n)。
+    ng/mL+µg/g → ×10⁻³; ng/mL+µg/kg → 无因子 (1 ng/g ≡ 1 µg/kg, 量纲严格成立)。"""
     base = r"w = \frac{C \cdot V}{m}"
-    e = _UNIT_EXP.get(unit, 0)
+    e = _UNIT_EXP.get(unit, 0) + CIN_UNIT_EXP.get(conc_unit, 0)
     return base if e == 0 else base + rf" \times 10^{{{e}}}"
 
 
@@ -870,11 +873,12 @@ def _sec2_model(method, r, analyte_label):
     """§2 测量模型 (方法级共享)。"""
     matrix = method.get("matrix", "（基质）")
     unit = method.get("unit", "mg/kg")
+    conc_unit = method.get("conc_unit", "mg/L")
     L = []; A = L.append
     A("## 2 测量模型\n")
-    A(f"$$ {_model_latex(unit)} $$")
+    A(f"$$ {_model_latex(unit, conc_unit)} $$")
     A(f"式中：w—{matrix}中{analyte_label}含量({unit})；")
-    A("　　　C—样液浓度(mg/L)；")
+    A(f"　　　C—样液浓度({conc_unit})；")
     A("　　　V—定容体积(mL)；")
     A("　　　m—称样量(g)。")
     A("从测量模型可看出，各影响参数相互独立，且由于数学模型是积和商的模型，合成标准不确定度可用相对标准不确定度进行合成。")
@@ -911,6 +915,8 @@ def render(method, r):
     rec = r["recovery"]
     fit = r["fit"]
     unit = method.get("unit", "mg/kg")
+    _cu = method.get("conc_unit", "mg/L")                     # 样液浓度录入单位 (叙述/式中跟随)
+    _cu_note = "" if _cu == "mg/L" else "（标准曲线横坐标及 u(Q) 均以 mg/L 计）"
 
     # 占比按 *方差贡献* (正确 GUM 口径). 注: 范本表7用的是线性占比(非标准).
     g = lambda x: f"{x:g}"
@@ -1022,7 +1028,7 @@ def render(method, r):
     A(f"本方法采用{method_word}定量，最小二乘法拟合出的标准曲线线性方程为 {eq_str}，"
       f"其中 x 为{x_word}，y 为{y_word}。{is_clause}拟合时选用 {n_pt} 个浓度点{origin_clause}{force_clause}"
       f"（n = {n_fit}），样品溶液平行测定 {p_meas} 次（p = {p_meas}），由标准曲线线性回归方程求得的样液平均质量浓度 "
-      f"C₀ = {g(method['x_pred'])} mg/L。")
+      f"C₀ = {g(method['x_pred'] * 10 ** -CIN_UNIT_EXP.get(_cu, 0))} {_cu}。{_cu_note}")
     # 式中各分量独占一行并对齐 (仿「2 测量模型」式中): 首行"式中："+变量, 续行3个全角空格
     # 缩进使变量字母与首行对齐 (每行各为独立段→同享 Normal 首行缩进2字符; 3全角空格 == "式中：" 3字宽)。
     # 行尾两空格=Markdown硬换行 (st.markdown预览换行; docx按行分段, 尾空格被 strip)。
@@ -1041,7 +1047,7 @@ def render(method, r):
             "　　　s——回归残差标准差（自由度 n−1，过原点仅估斜率一个参数）；",
             "　　　n——标准曲线浓度点数；",
             "　　　p——样品溶液平行测定次数；",
-            "　　　C₀——由标准曲线求得的样液平均质量浓度（mg/L）；",
+            f"　　　C₀——由标准曲线求得的样液平均质量浓度（{_cu}）；",
             "　　　Sxx——各浓度点浓度的平方和（过原点回归，非离差平方和）。",
         ]))
     else:
@@ -1060,7 +1066,7 @@ def render(method, r):
             "　　　s——回归残差标准差（自由度 n−2）；",
             "　　　n——标准曲线浓度点数；",
             "　　　p——样品溶液平行测定次数；",
-            "　　　C₀——由标准曲线求得的样液平均质量浓度（mg/L）；",
+            f"　　　C₀——由标准曲线求得的样液平均质量浓度（{_cu}）；",
             "　　　x̄——标准曲线各浓度点浓度的平均值；",
             "　　　Sxx——各浓度点浓度的离差平方和。",
         ]))
@@ -1109,7 +1115,7 @@ def render(method, r):
         _vol = f"{g(v_add)}μL"
     else:
         _vol = ""
-    spike_clause = (f"均添加{g(c_std)}mg/L的标准溶液{_vol}，使加入的目标物含量为{fmt_result(w_add, _wrm, _wnd)}mg/kg，"
+    spike_clause = (f"均添加{g(c_std)}mg/L的标准溶液{_vol}，使加入的目标物含量为{fmt_result(w_add, _wrm, _wnd)}{unit}，"
                     if all(v for v in (c_std, v_add, w_add)) else "")
     nt_rec = _tab() if rec_vals else None
     _rec_tail = f"结果见表{nt_rec}。" if nt_rec else "结果见下式。"
@@ -1587,6 +1593,7 @@ def render_multi(method, groups, analytes, results):
     else:
         A("$$ u(Q) = \\frac{s}{a}\\sqrt{\\frac{1}{p}+\\frac{1}{n}+\\frac{(C_0-\\bar{x})^{2}}{S_{xx}}} $$")
     A("$$ u_{rel}(Q) = \\frac{u(Q)}{C_0} $$")
+    _cu = method.get("conc_unit", "mg/L")                     # 样液浓度录入单位 (式中跟随; 4.4 表恒 mg/L)
     # 式中 (写一次, 对齐单目标物范本「式中」段)
     if force_origin:
         A("  \n".join([
@@ -1594,7 +1601,7 @@ def render_multi(method, groups, analytes, results):
             "　　　s——回归残差标准差（自由度 n−1，过原点仅估斜率一个参数）；",
             "　　　n——标准曲线浓度点数；",
             "　　　p——样品溶液平行测定次数；",
-            "　　　C₀——由标准曲线求得的样液平均质量浓度（mg/L）；",
+            f"　　　C₀——由标准曲线求得的样液平均质量浓度（{_cu}）；",
             "　　　Sxx——各浓度点浓度的平方和（过原点回归，非离差平方和）。",
         ]))
     else:
@@ -1604,7 +1611,7 @@ def render_multi(method, groups, analytes, results):
             "　　　s——回归残差标准差（自由度 n−2）；",
             "　　　n——标准曲线浓度点数；",
             "　　　p——样品溶液平行测定次数；",
-            "　　　C₀——由标准曲线求得的样液平均质量浓度（mg/L）；",
+            f"　　　C₀——由标准曲线求得的样液平均质量浓度（{_cu}）；",
             "　　　x̄——标准曲线各浓度点浓度的平均值；",
             "　　　Sxx——各浓度点浓度的离差平方和。",
         ]))

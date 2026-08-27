@@ -45,12 +45,17 @@ cp lims_config.example.toml lims_config.toml  # 填 [lims] base_url / username /
 
 **后续发版**（本地 `git push` 后，在服务器项目目录内）：
 ```bash
-cd E:\mup-web
+cd E:\server\mup-web
 update_server.bat
 ```
 等价于 `git reset --hard origin/main` + 重装依赖 + `nssm restart MupWeb`。
 
 > `drafts/`（用户草稿）已 gitignore，`git reset --hard` **不会**清空服务器上用户新建的草稿——这是有意的数据保护。`server.py` 在首次保存草稿时会自动创建该目录。
+
+**远程更新**（本机直接发版，不用 RDP 上服务器）：
+- 服务器一次性启用 ssh（管理员 PowerShell，命令见 `update_remote.bat` 头部注释）：
+  `Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.0.1.0` + `Start-Service sshd` + 设 `LocalAccountTokenFilterPolicy=1`（否则 ssh 登录的管理员是 UAC 过滤令牌，`nssm stop` 拒绝访问）。
+- 之后本机跑 `update_remote.bat`（改好脚本里的 `SUSER`），ssh 远程执行服务器上的 `update_server.bat` 并轮询等服务恢复。传参可更新同服务器其他程序：`update_remote.bat E:\<其他程序>\update_server.bat`。
 
 ## parity 回归测试（可选）
 
@@ -74,5 +79,6 @@ static/              前端（index.html + js/ + styles.css）
 parity/              回归测试套件
 deploy_server.bat    首次部署（服务器）
 update_server.bat    发版刷新（服务器）
+update_remote.bat    远程发版（本机 ssh 触发服务器 update_server.bat）
 requirements.txt     运行时依赖
 ```

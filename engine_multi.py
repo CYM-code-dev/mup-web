@@ -20,8 +20,8 @@ import math
 ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
-from uncertainty import (mup_cg248, BASELINE_PARAMS, UNIT_EXP, balance_mpe_g,  # noqa: E402
-                         round_sf, round_dp, urel_stock_liquid, urel_mass,
+from uncertainty import (mup_cg248, BASELINE_PARAMS, UNIT_EXP, CIN_UNIT_EXP,  # noqa: E402
+                         balance_mpe_g, round_sf, round_dp, urel_stock_liquid, urel_mass,
                          urel_sample_volume)
 from engine_single import (KIND_LABELS, VOLUMES, _PIP_REV, _FLASK_REV, _MAKEUP_REV, _resolve_pip,  # noqa: E402
                            _uses_from_ops, _is_na, _vessels_of, _vessel_echo,
@@ -186,7 +186,8 @@ def _build_params(method, group, a):
 
 # ---- 逐字移植 app.py:3173-3186 ----
 def _derive_spike_rw(spike_C, spike_m, V, exp, c0, round_mode="有效数字", nd=3):
-    """加标原始 C(mg/L)/m(g) + 方法定容 V + 单位 exp + 理论加标 C₀ → (测定值列表, 回收率列表)。"""
+    """加标原始 C(已归一 mg/L)/m(g) + 方法定容 V + 单位 exp + 理论加标 C₀(mg/L) → (测定值列表, 回收率列表)。
+    调用方负责把录入单位(mg/L/ng/mL)的 C 先归一为 mg/L 再传入 (ng/mL→×10⁻³, 见 CIN_UNIT_EXP)。"""
     if not c0 or not V or exp is None:
         return [], []
     rnd = round_sf if round_mode == "有效数字" else round_dp
@@ -284,6 +285,7 @@ def _method_from_scalars(scalars, mu_rows=None):
         "include_origin": S("mu_curve_include_origin") == "是",
         "force_origin": S("mu_curve_force_origin") == "是",
         "unit": S("mu_unit", "mg/kg"),
+        "conc_unit": S("mu_conc_unit", "mg/L"),               # ⑥ 加标C 录入单位 (装配层归一 mg/L)
         "round_mode": S("mu_round_mode", "有效数字"), "round_nd": int(S("mu_round_nd", DEF["round_nd"])),
         "balance_id": S("mu_balance_id", ""), "balance_tol": balance_tol,
         "m_sample": m_sample, "n_weighings": int(S("mu_n_weighings", DEF["n_weighings"])),
@@ -451,6 +453,7 @@ def build_params_multi(state):
     default_cm = scalars.get("mu_curve_method", "外标法")
     _V = method.get("vessel_volume")
     _exp = UNIT_EXP.get(method.get("unit", "mg/kg"))
+    _cexp = CIN_UNIT_EXP.get(method.get("conc_unit", "mg/L"), 0)   # ⑥ 加标C → mg/L 指数
     _rm = method.get("round_mode", "有效数字")
     _nd = int(method.get("round_nd", 3))
     for a in analytes:
@@ -465,14 +468,15 @@ def build_params_multi(state):
             a["is_name"] = m.get("is_name", "")
             if m.get("spike_C"):                             # ⑥ 新格式: 原始 加标C/m → 派生 测定值/回收率
                 a["p"] = len(m["spike_C"])
-                a["x_pred"] = sum(m["spike_C"]) / len(m["spike_C"])
+                a["x_pred"] = sum(m["spike_C"]) / len(m["spike_C"]) * 10 ** _cexp   # 归一 mg/L
                 a["X"] = None
                 c_std, v_add = m.get("spike_std_conc"), m.get("spike_add_vol")
                 a["spike_std_conc"], a["spike_add_vol"] = c_std, v_add
                 if c_std and v_add and _V and _exp is not None:
                     c0 = c_std * v_add * 1e-3 / _V
+                    _c_eff = [c * 10 ** _cexp for c in m["spike_C"]]   # 归一 mg/L 后传入 (函数保持逐字移植不动)
                     a["replicates"], a["recovery"] = _derive_spike_rw(
-                        m["spike_C"], m["spike_m"], _V, _exp, c0, _rm, _nd)
+                        _c_eff, m["spike_m"], _V, _exp, c0, _rm, _nd)
                     _ms = method.get("m_sample")
                     if _ms and not _is_na(_ms) and _ms > 0:
                         _rnd_fn = round_sf if _rm == "有效数字" else round_dp

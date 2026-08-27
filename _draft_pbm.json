@@ -1,0 +1,468 @@
+{
+  "_draft_version": 4,
+  "mode": "multi",
+  "_saved_at": "2026-08-23T06:46:05",
+  "scalars": {
+    "mu_meta_ref": "MUP-CG-259",
+    "mu_meta_date": "2026/08/3",
+    "mu_meta_author": "洪涛",
+    "mu_title": "塑料中铅、镉、汞含量测定的不确定度评估",
+    "mu_basis": "GB/T 38295-2019 塑料材料中铅、镉、六价铬、汞限量；GB/T 38292-2019 塑料材料中汞含量的测定；GB/T 38291-2019 塑料材料中铅含量的测定；GB/T 38290-2019 塑料材料中镉含量的测定",
+    "mu_instrument": "电感耦合等离子体质谱仪（ICPMS）",
+    "method_std_no": "",
+    "mu_matrix": "塑料",
+    "mu_analyte": "铅、镉、汞",
+    "mu_curve_method": "外标法",
+    "mu_curve_npoints": 6,
+    "mu_curve_inj": 1,
+    "mu_spike_nrep": 7,
+    "mu_fr_inj": 1,
+    "mu_unit": "mg/kg",
+    "mu_round_mode": "有效数字",
+    "mu_round_nd": 3,
+    "mu_dtau": 5,
+    "mu_env_temp": 20,
+    "mu_prep_flow": "称取0.1g(精确至0.1mg)试样，置于聚四氟乙烯消解内罐中，加入5mL硝酸，1.5mL四氟酸酸，1.5mL过氧化氢，用微波消解仪消解。消解结束后，将消解液转移至50mL容量瓶中,用0.45μm滤头过滤于ICP-MS上机分析。",
+    "mu_influences": "",
+    "mu_balance_id": "CK-SB005-CG",
+    "mu_m_sample_raw": "0.1000",
+    "mu_n_weighings": 2,
+    "mu_balance_tol_mg": 0.5,
+    "mu_vessel_kind": "flask",
+    "mu_vessel_vol_sel": "50",
+    "mu_makeup_mode": "single",
+    "mu_blend_vk": "",
+    "mu_blend_vv": "",
+    "mu_blend_vuse": null,
+    "mu_blend_n": 2,
+    "mu_n_reag": 2,
+    "solvent_preset": "自定义",
+    "makeup_solvent_val": "5%硝酸",
+    "alpha_val": 0.0018,
+    "mu_show_solid": false,
+    "mu_show_liquid": true,
+    "mu_solid_bal_mg": 0.5,
+    "mu_solid_balance_id": "",
+    "mu_stock_makeup_mode": "single",
+    "mu_stock_solvent_preset": "自定义",
+    "mu_stock_solvent": "5%硝酸",
+    "mu_stock_alpha": 0.0018,
+    "mu_stock_reagents": [],
+    "mu_stock_blend_n": 2,
+    "mu_liq_stock_makeup_mode": "single",
+    "mu_liq_stock_solvent_preset": "自定义",
+    "mu_liq_stock_solvent": "5%硝酸",
+    "mu_liq_stock_alpha": 0.0018,
+    "mu_liq_stock_reagents": [],
+    "mu_liq_stock_blend_n": 2,
+    "mu_work_serial_dilute": false,
+    "mu_work_same_solvent": true,
+    "mu_work_solvent_preset": "自定义",
+    "mu_work_solvent": "",
+    "mu_work_alpha": "",
+    "mu_work_makeup_mode": "single",
+    "mu_work_blend_n": 2
+  },
+  "topo_rows": [
+    {
+      "分组名": "纯品-1",
+      "类型": "固体",
+      "目标物": ""
+    },
+    {
+      "分组名": "汞",
+      "类型": "液体",
+      "目标物": "汞",
+      "Urel%": 1,
+      "C_cert": null,
+      "U_abs": null,
+      "定容分组": "汞"
+    },
+    {
+      "分组名": "铅镉",
+      "类型": "液体",
+      "目标物": "铅",
+      "Urel%": 1,
+      "C_cert": null,
+      "U_abs": null,
+      "定容分组": "铅镉"
+    },
+    {
+      "分组名": "铅镉",
+      "类型": "液体",
+      "目标物": "镉",
+      "Urel%": 1,
+      "C_cert": null,
+      "U_abs": null,
+      "定容分组": "铅镉"
+    }
+  ],
+  "grp_params": {
+    "汞": {
+      "cert_mode": "relative",
+      "flasks": {
+        "汞": {
+          "pip_vessel": "1 mL 分度吸量管(A)(±0.008)",
+          "pip_kind": null,
+          "pip_nominal": null,
+          "pip_vol": "0.10",
+          "flask_vol": 100,
+          "flask_vessel": "100 mL 容量瓶(A)(±0.1)"
+        }
+      },
+      "k_cert": 2
+    },
+    "铅镉": {
+      "cert_mode": "relative",
+      "flasks": {
+        "定容组1": {
+          "pip_vessel": null,
+          "pip_kind": null,
+          "pip_nominal": null,
+          "pip_vol": null,
+          "flask_vol": null
+        },
+        "铅镉": {
+          "pip_vessel": "1 mL 单标吸量管(A)(±0.007)",
+          "pip_kind": null,
+          "pip_nominal": null,
+          "pip_vol": "0.10",
+          "flask_vol": 10,
+          "flask_vessel": "10 mL 容量瓶(A)(±0.02)"
+        }
+      },
+      "k_cert": 2,
+      "n_substances": 2
+    }
+  },
+  "ding": {
+    "汞": {
+      "feeds": {
+        "汞": [
+          {
+            "dg": "定容组2-中",
+            "pip_vessel": "1 mL 分度吸量管(A)(±0.008)",
+            "pip_vol": "1.00"
+          }
+        ],
+        "铅镉": [
+          {
+            "dg": "定容组1-中",
+            "pip_vessel": null,
+            "pip_vol": null
+          }
+        ]
+      },
+      "flasks": {
+        "定容组2-中": "10 mL 容量瓶(A)(±0.02)"
+      },
+      "work": {
+        "定容组2-中": [
+          {
+            "flask_vessel": "50 mL 容量瓶(A)(±0.05)",
+            "pip_vessel": "0.05 mL 移液枪 5-50μL(±3%)",
+            "pip_vol": "0.010",
+            "目标浓度(mg/L)": "0.0002",
+            "母液浓度(mg/L)": "1.00",
+            "_motherLocked": true
+          },
+          {
+            "母液浓度(mg/L)": "1.000",
+            "pip_vessel": "0.2 mL 移液枪 20-200μL(±1.5%)",
+            "pip_vol": "0.025",
+            "flask_vessel": "50 mL 容量瓶(A)(±0.05)",
+            "目标浓度(mg/L)": "0.0005"
+          },
+          {
+            "母液浓度(mg/L)": "1.000",
+            "pip_vessel": "0.2 mL 移液枪 20-200μL(±1.5%)",
+            "pip_vol": "0.050",
+            "flask_vessel": "50 mL 容量瓶(A)(±0.05)",
+            "目标浓度(mg/L)": "0.001"
+          },
+          {
+            "母液浓度(mg/L)": "1.000",
+            "pip_vessel": "1 mL 分度吸量管(A)(±0.008)",
+            "pip_vol": "0.10",
+            "flask_vessel": "50 mL 容量瓶(A)(±0.05)",
+            "目标浓度(mg/L)": "0.002"
+          },
+          {
+            "母液浓度(mg/L)": "1.000",
+            "pip_vessel": "1 mL 分度吸量管(A)(±0.008)",
+            "pip_vol": "0.25",
+            "flask_vessel": "50 mL 容量瓶(A)(±0.05)",
+            "目标浓度(mg/L)": "0.005"
+          }
+        ],
+        "定容组1-中": [
+          {
+            "flask_vessel": "10 mL 容量瓶(A)(±0.02)",
+            "pip_vessel": null,
+            "pip_vol": null,
+            "目标浓度(mg/L)": null,
+            "母液浓度(mg/L)": null
+          },
+          {
+            "母液浓度(mg/L)": null,
+            "pip_vessel": "",
+            "pip_vol": null,
+            "flask_vessel": "10 mL 容量瓶(A)(±0.02)",
+            "目标浓度(mg/L)": null
+          },
+          {
+            "母液浓度(mg/L)": null,
+            "pip_vessel": "",
+            "pip_vol": null,
+            "flask_vessel": "10 mL 容量瓶(A)(±0.02)",
+            "目标浓度(mg/L)": null
+          }
+        ]
+      },
+      "direct": true
+    },
+    "铅镉": {
+      "feeds": {
+        "铅镉": [
+          {
+            "dg": "定容组2-中",
+            "pip_vessel": "10 mL 单标吸量管(A)(±0.02)",
+            "pip_vol": "10.00"
+          }
+        ]
+      },
+      "flasks": {
+        "定容组2-中": "10 mL 容量瓶(A)(±0.02)"
+      },
+      "work": {
+        "定容组2-中": [
+          {
+            "flask_vessel": "50 mL 容量瓶(A)(±0.05)",
+            "母液浓度(mg/L)": "1.00",
+            "pip_vessel": "0.05 mL 移液枪 5-50μL(±3%)",
+            "pip_vol": "0.010",
+            "目标浓度(mg/L)": "0.0002",
+            "_motherLocked": true
+          },
+          {
+            "母液浓度(mg/L)": "1.00",
+            "pip_vessel": "0.2 mL 移液枪 20-200μL(±1.5%)",
+            "pip_vol": "0.025",
+            "flask_vessel": "50 mL 容量瓶(A)(±0.05)",
+            "目标浓度(mg/L)": "0.0005"
+          },
+          {
+            "母液浓度(mg/L)": "1.00",
+            "pip_vessel": "1 mL 分度吸量管(A)(±0.008)",
+            "pip_vol": "0.050",
+            "flask_vessel": "50 mL 容量瓶(A)(±0.05)",
+            "目标浓度(mg/L)": "0.001"
+          },
+          {
+            "母液浓度(mg/L)": "1.00",
+            "pip_vessel": "1 mL 分度吸量管(A)(±0.008)",
+            "pip_vol": "0.250",
+            "flask_vessel": "50 mL 容量瓶(A)(±0.05)",
+            "目标浓度(mg/L)": "0.005"
+          },
+          {
+            "母液浓度(mg/L)": "1.00",
+            "pip_vessel": "1 mL 分度吸量管(A)(±0.008)",
+            "pip_vol": "0.500",
+            "flask_vessel": "50 mL 容量瓶(A)(±0.05)",
+            "目标浓度(mg/L)": "0.010"
+          },
+          {
+            "母液浓度(mg/L)": "1.00",
+            "pip_vessel": "1 mL 分度吸量管(A)(±0.008)",
+            "pip_vol": "1.00",
+            "flask_vessel": "50 mL 容量瓶(A)(±0.05)",
+            "目标浓度(mg/L)": "0.020"
+          }
+        ]
+      },
+      "direct": true
+    }
+  },
+  "meas": {
+    "汞": {
+      "X": null,
+      "p": null,
+      "x_pred": null,
+      "curve_method": "外标法",
+      "is_name": "",
+      "points": [
+        [
+          0.0002,
+          230.263333333333
+        ],
+        [
+          0.0005,
+          720.83666666667
+        ],
+        [
+          0.001,
+          1545.18
+        ],
+        [
+          0.002,
+          3317.53
+        ],
+        [
+          0.005,
+          8896.51
+        ]
+      ],
+      "replicates": [],
+      "recovery": [],
+      "spike_std_conc": 1,
+      "spike_add_vol": 500,
+      "spike_C": [
+        0.000896,
+        0.000834,
+        0.0008,
+        0.000802,
+        0.000849,
+        0.000831,
+        0.000816
+      ],
+      "spike_m": [
+        0.1004,
+        0.1009,
+        0.1005,
+        0.1,
+        0.1002,
+        0.1003,
+        0.1007
+      ]
+    },
+    "铅": {
+      "X": null,
+      "p": null,
+      "x_pred": null,
+      "curve_method": "外标法",
+      "is_name": "",
+      "points": [
+        [
+          0.0002,
+          -99.4866666666603
+        ],
+        [
+          0.0005,
+          999.1033333333
+        ],
+        [
+          0.001,
+          10866.0266666667
+        ],
+        [
+          0.005,
+          95229.78
+        ],
+        [
+          0.01,
+          185596.816666667
+        ],
+        [
+          0.02,
+          380274.506666667
+        ]
+      ],
+      "replicates": [],
+      "recovery": [],
+      "spike_std_conc": 1,
+      "spike_add_vol": 500,
+      "spike_C": [
+        0.000804,
+        0.000844,
+        0.000825,
+        0.000832,
+        0.000802,
+        0.000987,
+        0.000801
+      ],
+      "spike_m": [
+        0.1004,
+        0.1002,
+        0.1001,
+        0.1002,
+        0.1,
+        0.1004,
+        0.1005
+      ]
+    },
+    "镉": {
+      "X": null,
+      "p": null,
+      "x_pred": null,
+      "curve_method": "外标法",
+      "is_name": "",
+      "points": [
+        [
+          0.0002,
+          1858.86333333333
+        ],
+        [
+          0.0005,
+          2049.11333333333
+        ],
+        [
+          0.001,
+          4425.66666666667
+        ],
+        [
+          0.005,
+          22808.04
+        ],
+        [
+          0.01,
+          44013.2666666667
+        ],
+        [
+          0.02,
+          88921.6666666667
+        ]
+      ],
+      "replicates": [],
+      "recovery": [],
+      "spike_std_conc": 1,
+      "spike_add_vol": 500,
+      "spike_C": [
+        0.00102,
+        0.000977,
+        0.001015,
+        0.000965,
+        0.001046,
+        0.001022,
+        0.000982
+      ],
+      "spike_m": [
+        0.1004,
+        0.1002,
+        0.1001,
+        0.1002,
+        0.1,
+        0.1004,
+        0.1005
+      ]
+    }
+  },
+  "curve_meta": {
+    "汞": {
+      "method": "外标法",
+      "is_name": ""
+    },
+    "铅": {
+      "method": "外标法",
+      "is_name": ""
+    },
+    "镉": {
+      "method": "外标法",
+      "is_name": ""
+    }
+  },
+  "mu_rows": {
+    "blend": [],
+    "reag": []
+  }
+}

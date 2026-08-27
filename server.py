@@ -22,7 +22,8 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 from uncertainty import (mup_cg248, GLASS_TOLERANCE, BASELINE_PARAMS,  # noqa: E402
-                         UNIT_OPTIONS, UNIT_EXP, CONC_UNIT_OPTIONS, CONC_UNIT_EXP, PIPETTE_TOL)
+                         UNIT_OPTIONS, UNIT_EXP, CONC_UNIT_OPTIONS, CONC_UNIT_EXP,
+                         CIN_UNIT_OPTIONS, CIN_UNIT_EXP, PIPETTE_TOL)
 from gen_report import render, render_multi  # noqa: E402
 from engine_single import (build_params_single, KIND_LABELS, VOLUMES,  # noqa: E402
                            _PIP_OPTS, _FLASK_OPTS, _MAKEUP_OPTS,
@@ -78,6 +79,8 @@ def meta_constants():
         "unit_exp": UNIT_EXP,
         "conc_unit_options": list(CONC_UNIT_OPTIONS),
         "conc_unit_exp": CONC_UNIT_EXP,
+        "cin_unit_options": list(CIN_UNIT_OPTIONS),   # 样液浓度(⑤/⑥ 实测加标C)单位
+        "cin_unit_exp": CIN_UNIT_EXP,
         "solvents": [dict(s) for s in solvents.SOLVENT_DB],
         "kind_labels": KIND_LABELS,
         "volumes": VOLUMES,
@@ -287,10 +290,14 @@ async def export_multi_docx(body: dict):
 def template_multi_download(body: dict):
     groups = [{"name": g["name"], "kind": g["kind"], "analytes": g["analytes"]}
               for g in _rows_to_groups(body.get("topo_rows") or [])]
+    conc_unit = str(body.get("conc_unit") or "mg/L")          # ⑥ 加标C 列单位 (未知值回退 mg/L)
+    if conc_unit not in CIN_UNIT_OPTIONS:
+        conc_unit = "mg/L"
     buf = io.BytesIO()
     tmpl.write_template(buf, groups=groups, curve_meta=body.get("curve_meta") or {},
                         n_points=int(body.get("n_points", 3)), n_reps=int(body.get("n_reps", 2)),
-                        n_inj_point=int(body.get("n_inj_point", 1)), n_inj_meas=int(body.get("n_inj_meas", 1)))
+                        n_inj_point=int(body.get("n_inj_point", 1)), n_inj_meas=int(body.get("n_inj_meas", 1)),
+                        conc_unit=conc_unit)
     buf.seek(0)
     return Response(content=buf.read(),
                     media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -301,10 +308,10 @@ def template_multi_download(body: dict):
 async def template_multi_upload(file: UploadFile = File(...)):
     buf = io.BytesIO(await file.read())
     try:
-        meas = tmpl.read_template(buf)
+        meas, conc_unit = tmpl.read_template(buf)
     except Exception as e:
         raise HTTPException(422, f"模板解析失败: {e}")
-    return _resp({"meas": meas})
+    return _resp({"meas": meas, "conc_unit": conc_unit})
 
 
 @app.get("/api/drafts/multi")

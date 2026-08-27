@@ -61,6 +61,12 @@ async function loadDraft(name) {
 }
 
 // ---- ① 总述 ----
+// 样液浓度单位 ↔ 结果单位 自动配对 (1 µg/g≡1 mg/kg 仅显示名不同); 切换样液单位时覆盖式联动, 此后仍可手改结果单位
+const CONC_UNIT_PAIR = { "mg/L": "mg/kg", "ng/mL": "µg/g" };
+function updateModelTip() {   // 侧栏测量模型 tooltip: C 单位跟随①所选样液浓度单位 (覆盖 index.html 静态串)
+  const t = document.getElementById("meta-model");
+  if (t) t.title = `式中：w—含量；C—样液浓度(${S().scalars.conc_unit || "mg/L"})；V—定容体积(mL)；m—称样量(g)`;
+}
 function renderT1() {
   const c = document.getElementById("t1"); c.innerHTML = "";
   const hdr = el("div", "card"); hdr.append(cardTitle("页眉信息"));
@@ -71,11 +77,20 @@ function renderT1() {
   hdr.appendChild(hg);
 
   const u = el("div", "card"); u.append(cardTitle("结果单位设置"));
-  const ug = el("div", "grid-3");
-  bindSelect(ug, "单位", "unit", meta().unit_options.map(x => ({ value: x, label: x })), { on: () => renderT5(meta()) });   // 单位变 → ⑤ 标签(含单位)+ 理论目标物含量 + 测定值 w 重算
-  bindSelect(ug, "结果修约方式", "round_mode", [{ value: "有效数字", label: "有效数字" }, { value: "小数位数", label: "小数位数" }], { on: recompSpike });
-  bindInput(ug, "位数", "round_nd", { type: "number", attrs: { step: 1, min: 0 }, on: recompSpike });
-  u.appendChild(ug);
+  const ug = el("div", "grid-2");   // 第一行: 样液浓度单位(左) | 结果单位(右)
+  let unitSel;
+  bindSelect(ug, "样液浓度单位", "conc_unit", (meta().cin_unit_options || ["mg/L", "ng/mL"]).map(x => ({ value: x, label: x })), {
+    on: v => {   // 切样液单位 → 结果单位自动配对 + ⑤ 列头/R/w 重算 + 模型提示刷新
+      const pair = CONC_UNIT_PAIR[v];
+      if (pair) { S().scalars.unit = pair; unitSel.value = pair; }
+      renderT5(meta()); updateModelTip();
+    },
+  });
+  unitSel = bindSelect(ug, "结果单位", "unit", meta().unit_options.map(x => ({ value: x, label: x })), { on: () => renderT5(meta()) });   // 单位变 → ⑤ 标签(含单位)+ 理论目标物含量 + 测定值 w 重算
+  const ug2 = el("div", "grid-2");  // 第二行: 结果修约方式 | 位数
+  bindSelect(ug2, "结果修约方式", "round_mode", [{ value: "有效数字", label: "有效数字" }, { value: "小数位数", label: "小数位数" }], { on: recompSpike });
+  bindInput(ug2, "位数", "round_nd", { type: "number", attrs: { step: 1, min: 0 }, on: recompSpike });
+  u.appendChild(ug); u.appendChild(ug2);
   const uh = el("small", "muted"); uh.textContent = "位数比标准规定多一位（AI 识别标准时已自动 +1）"; u.appendChild(uh);
 
   const env = el("div", "card"); env.append(cardTitle("测量环境"));
@@ -102,6 +117,7 @@ function renderT1() {
   pf.appendChild(aiBtn);
   const aiMsg = el("div", "ai-msg"); aiMsg.id = "ai-msg"; pf.appendChild(aiMsg);
   c.appendChild(pf);
+  updateModelTip();
 }
 function balanceMPEmg(m) { return m <= 50 ? 0.5 : m <= 200 ? 1.0 : 1.5; }
 function deriveBalanceTol() {  // m_sample 变 → d 重取 I级 MPE (写状态; 不重渲免丢焦点)
@@ -620,14 +636,16 @@ function renderT5(meta) {
 }
 function spikeGridCfg(meta) {
   const exp = meta.unit_exp[S().scalars.unit] ?? 0;
+  const cexp = (meta.cin_unit_exp || {})[S().scalars.conc_unit || "mg/L"] ?? 0;   // ⑤ 实测C 录入单位 → mg/L (理论C₀/标液恒 mg/L)
+  const cu = S().scalars.conc_unit || "mg/L";
   const rm = S().scalars.round_mode; const nd = Number(S().scalars.round_nd);
   const rnd = rm === "有效数字" ? round_sf : round_dp;
   return {
     columns: [
-      { key: "实测加标 C (mg/L)", type: "number", label: "实测加标 C (mg/L)", step: "any" },
+      { key: "实测加标 C (mg/L)", type: "number", label: `实测加标 C (${cu})`, step: "any" },   // key 为存储标识恒不改, 仅 label 跟随单位
       { key: "称样量 m (g)", type: "number", label: "称样量 m (g)", step: 0.0001 },
-      { key: "回收率 R", label: "回收率 R", computed: r => (r["实测加标 C (mg/L)"] != null && S().scalars.spike_theor) ? round_sf(r["实测加标 C (mg/L)"] / S().scalars.spike_theor, 3) : null, format: v => resultStr(v, "有效数字", 3) },
-      { key: "测定值 w", label: "测定值 w", computed: r => { const c = r["实测加标 C (mg/L)"], m = r["称样量 m (g)"]; return (c != null && m > 0) ? rnd(c * S().scalars.spike_vol / m * 10 ** exp, nd) : null; }, format: v => resultStr(v, rm, nd) },
+      { key: "回收率 R", label: "回收率 R", computed: r => (r["实测加标 C (mg/L)"] != null && S().scalars.spike_theor) ? round_sf(r["实测加标 C (mg/L)"] * 10 ** cexp / S().scalars.spike_theor, 3) : null, format: v => resultStr(v, "有效数字", 3) },
+      { key: "测定值 w", label: "测定值 w", computed: r => { const c = r["实测加标 C (mg/L)"], m = r["称样量 m (g)"]; return (c != null && m > 0) ? rnd(c * 10 ** cexp * S().scalars.spike_vol / m * 10 ** exp, nd) : null; }, format: v => resultStr(v, rm, nd) },
     ],
     rows: S().editors.spike_df, dynamic: true, ctx: S(),
   };

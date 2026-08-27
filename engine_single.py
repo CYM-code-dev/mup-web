@@ -20,7 +20,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 from uncertainty import (mup_cg248, GLASS_TOLERANCE, BASELINE_PARAMS, UNIT_EXP,  # noqa: E402
-                         CONC_UNIT_EXP, balance_mpe_g, round_sf, round_dp,
+                         CONC_UNIT_EXP, CIN_UNIT_EXP, balance_mpe_g, round_sf, round_dp,
                          PIPETTE_TOL, PIPETTE_RANGES, pipette_cal_point, vessel_tol)
 import solvents  # noqa: E402
 
@@ -39,6 +39,8 @@ VOLUMES = {
 _USE_GRP = {"pip_s": 0, "pip_g": 1, "pip_p": 1, "cylinder": 1, "flask": 2}
 # 分度吸量管分度值 (mL): 选量器时判 "V 是否为分度值整数倍 (可直读)" → 优先分度吸管, 否则移液枪
 _PIP_G_SUB = {1: 0.01, 2: 0.02, 5: 0.05, 10: 0.1, 20: 0.1}
+# ⑤ 表列 key 为稳定存储标识 (草稿/前端 grid 按此读写), 与显示单位解耦:
+# 样液浓度单位 (conc_unit, mg/L/ng/mL) 只影响前端列 label 与引擎装配层换算, key 恒不改。
 _C_COL, _M_COL, _R_COL, _W_COL = "实测加标 C (mg/L)", "称样量 m (g)", "回收率 R", "测定值 w"
 
 
@@ -246,6 +248,8 @@ def build_params_single(state):
     spike_vol = S("spike_vol")
     spike_theor = S("spike_theor")
     exp = UNIT_EXP[unit]
+    conc_unit = S("conc_unit") or "mg/L"                      # 样液浓度录入单位 (⑤ 实测加标C)
+    cexp = CIN_UNIT_EXP.get(conc_unit, 0)                     # 归一到 mg/L 的指数
 
     # ② 定容 (single/mixed/multi)
     if makeup_mode == "mixed":
@@ -368,10 +372,10 @@ def build_params_single(state):
     spike_rows = _spike_pairs(editors.get("spike_df") or [])
     _rnd = round_sf if round_mode == "有效数字" else round_dp
     nd = int(round_nd)
-    c_vals = [c for c, _ in spike_rows if c is not None]
+    c_vals = [c * 10 ** cexp for c, _ in spike_rows if c is not None]   # 归一 mg/L (曲线/回收率基准)
     p_curve = len(c_vals) if c_vals else DEF["p"]
     x_pred = sum(c_vals) / len(c_vals) if c_vals else DEF["x_pred"]
-    pairs = [(c, m) for c, m in spike_rows if c is not None and m is not None and m > 0]
+    pairs = [(c * 10 ** cexp, m) for c, m in spike_rows if c is not None and m is not None and m > 0]
     if pairs:
         replicates = [_rnd(c * spike_vol / m * 10 ** exp, nd) for c, m in pairs]
         recovery = [round_sf(c / spike_theor, 3) if spike_theor else float("nan") for c, _ in pairs]
@@ -390,7 +394,7 @@ def build_params_single(state):
         "include_origin": include_origin, "force_origin": force_origin,
         "analyte_areas": analyte_areas, "is_areas": is_areas,
         "replicates": replicates, "recovery": recovery, "X": X,
-        "curve_method": curve_method, "unit": unit, "stock_source": stock_source,
+        "curve_method": curve_method, "unit": unit, "conc_unit": conc_unit, "stock_source": stock_source,
         "spike_std_conc": spike_std_conc, "spike_add_vol": spike_add_vol, "spike_add_mass": spike_add_mass,
     }
     if makeup_mode == "mixed":

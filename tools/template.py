@@ -18,8 +18,16 @@ import unicodedata
 from openpyxl.styles import Font, PatternFill
 from openpyxl.utils import get_column_letter
 
+from uncertainty import CIN_UNIT_OPTIONS
+
 HEADER_FILL = PatternFill("solid", fgColor="D9E1F2")
 BOLD = Font(bold=True)
+
+
+def _cin_unit(hdr):
+    """⑥ 表头「实测加标C(单位)」→ 样液浓度单位 (仅认 CIN_UNIT_OPTIONS; 未知/缺失回退 mg/L)。"""
+    u = hdr[hdr.find("(") + 1:hdr.rfind(")")] if "(" in hdr and ")" in hdr else ""
+    return u if u in CIN_UNIT_OPTIONS else "mg/L"
 
 
 def _disp_width(s):
@@ -171,7 +179,8 @@ def _first_num(rows, key, cast):
     return None
 
 
-def write_template(path, groups=None, curve_meta=None, n_points=3, n_reps=2, n_inj_point=1, n_inj_meas=1):
+def write_template(path, groups=None, curve_meta=None, n_points=3, n_reps=2, n_inj_point=1, n_inj_meas=1,
+                   conc_unit="mg/L"):
     """生成「仅测量数据」xlsx 模板。标准品参数(纯度/证书/分组共享)在页面填, 不在本模板。
     groups: [{name, kind, analytes:[名]}] 结构 (来自页面 _rows_to_groups); None→1 个 demo 分组。
     curve_meta: {名: {"method":"外标法"/"内标法", "is_name":内标物标签}}; 预填 目标物表
@@ -180,7 +189,8 @@ def write_template(path, groups=None, curve_meta=None, n_points=3, n_reps=2, n_i
     n_reps: 每目标物加标平行样次数; 据此预填「精密度&回收率」表 N 行/目标物(仅目标物名, C/m 留空待填), ≥2。
     n_inj_point: 每点标液进样次数; 「曲线」表行数/物 = n_points × n_inj_point (同浓度多行不同峰面积), ≥1。
     n_inj_meas: 每次测定进样次数; 「精密度&回收率」表行数/物 = n_reps × n_inj_meas, ≥1。
-    多次进样(>1)时两表末列加「进样序号」(一次/二次…, 点内分组); =1 时无此列。"""
+    多次进样(>1)时两表末列加「进样序号」(一次/二次…, 点内分组); =1 时无此列。
+    conc_unit: ⑥ 实测加标C 的录入单位 (mg/L/ng/mL), 写进列头括号; 曲线/标液浓度列恒为 mg/L。"""
     if groups is None:
         groups = [{"name": "纯品-1", "kind": "solid", "analytes": []}]
     curve_meta = curve_meta or {}
@@ -211,7 +221,7 @@ def write_template(path, groups=None, curve_meta=None, n_points=3, n_reps=2, n_i
     # 曲线表预填 N 行/目标物(仅填目标物名); 浓度/峰面积由用户补。N = n_points × n_inj_point (每点重复进样)。
     # ⑥ 加标数据(实测加标C/称样量m)单列「精密度&回收率」表: 每物多组平行样(按 n_reps × n_inj_meas 预填 N 行/物 仅名, C/m 待填); 每物≥2 对
     # 多次进样(>1)→末列加「进样序号」(一次/二次…, 点内分组); 读侧按列序读前几列, 末列标签被忽略 → 向后兼容。
-    pr_hdr = ["目标物", "实测加标C(mg/L)", "称样量m(g)"]
+    pr_hdr = ["目标物", f"实测加标C({conc_unit})", "称样量m(g)"]
     if n_inj_meas > 1:
         pr_hdr.append("进样序号")
         _pad = len(pr_hdr) - 2   # 目标物与末列「进样序号」之间的数据列数 (C/m)
@@ -237,7 +247,8 @@ def write_template(path, groups=None, curve_meta=None, n_points=3, n_reps=2, n_i
 
 
 def read_template(path):
-    """解析测量数据模板 → {目标物名: {X, p, x_pred, curve_method, is_name, points, replicates, recovery}}。
+    """解析测量数据模板 → ({目标物名: {X, p, x_pred, curve_method, is_name, points, replicates, recovery}}, 样液浓度单位)。
+    样液浓度单位取自 ⑥「实测加标C(单位)」列头括号 (mg/L/ng/mL; 未知/无 → mg/L), 由调用方写入页面/引擎装配。
     标准品参数在页面填, 不在本模板。每目标物可独立 外标法/内标法 (目标物表「曲线方法」「内标物」列);
     曲线表新格式 [浓度, 分析物峰面积, 内标峰面积] → 内标法 y=面积比, 外标法 y=分析物峰面积。
     兼容旧模板: 目标物表无「曲线方法」列→默认外标; 曲线表旧 3 列 [浓度, y]→y 直用; 旧版分「重复性」「回收率」两表→分别读。
@@ -252,6 +263,8 @@ def read_template(path):
     ws = wb["目标物"]
     headers = [str(c.value).strip() for c in ws[1]]
     has_pr_in_target = any("实测加标" in h for h in headers)   # 合并格式: ⑥ C/m 在目标物表末两列
+    _c_hdr = next((h for h in headers if h.startswith("实测加标C")), "实测加标C(mg/L)")   # 列头带单位, 按前缀定位
+    conc_unit = _cin_unit(_c_hdr) if has_pr_in_target else "mg/L"
     raw = {}   # nm -> [行 dict, ...] (合并表同名目标物可多行: 首行各物参数 + 各重复行 C/m)
     for row in ws.iter_rows(min_row=2, values_only=True):
         if not row or row[0] is None:
@@ -277,7 +290,7 @@ def read_template(path):
         spike_C, spike_m = [], []
         if has_pr_in_target:   # 合并格式: 收集各行 (C,m) 配对
             for d in rows:
-                c = _num(d, "实测加标C(mg/L)", float)
+                c = _num(d, _c_hdr, float)
                 m = _num(d, "称样量m(g)", float)
                 if c is not None and m is not None:
                     spike_C.append(c)
@@ -314,6 +327,7 @@ def read_template(path):
                     out[nm]["spike_C"] = sp["spike_C"]
                     out[nm]["spike_m"] = sp["spike_m"]
             pr_spike_fmt = True
+            conc_unit = _cin_unit(next((h for h in pr_hdr if h.startswith("实测加标C")), ""))
         elif pr_ws:   # 上上版格式: 直接 测定值/回收率
             pr = _read_pr_sheet(pr_ws)
             reps = {nm: d["replicates"] for nm, d in pr.items()}
@@ -342,7 +356,7 @@ def read_template(path):
                 errors.append(f"{nm}: 回收率<2")
     if errors:
         raise ValueError("模板解析错误:\n- " + "\n- ".join(errors))
-    return out
+    return out, conc_unit
 
 
 def legacy_to_groups(stock, work_uses, u_work, analytes):
@@ -440,7 +454,8 @@ if __name__ == "__main__":
             [("B_内标", 1, 100, 50), ("B_内标", 2, 200, 50), ("B_内标", 3, 300, 50)], start=5):
         cv.cell(i, 1, n); cv.cell(i, 2, x); cv.cell(i, 3, a); cv.cell(i, 4, isa)
     wb.save(out)
-    meas = read_template(out)
+    meas, cu0 = read_template(out)
+    assert cu0 == "mg/L", f"默认模板单位应为 mg/L: {cu0}"
     assert set(meas) == {"A_外标", "B_内标"}, meas
     # 外标: y = 分析物峰面积; method/is_name 回读
     assert meas["A_外标"]["curve_method"] == "外标法" and meas["A_外标"]["is_name"] == ""
@@ -496,7 +511,8 @@ if __name__ == "__main__":
     for i, (c, m) in enumerate([(21.80, 0.5001), (21.50, 0.4999), (21.65, 0.5002), (21.45, 0.4998)], start=6):
         _pr_w.cell(i, 2, c); _pr_w.cell(i, 3, m)                  # B_内标 4 行
     _wb_i.save(out_i)
-    _meas_i = read_template(out_i)
+    _meas_i, _cu_i = read_template(out_i)
+    assert _cu_i == "mg/L"
     assert _meas_i["A_外标"]["points"] == [(1, 10), (1, 11), (2, 20), (2, 21), (3, 30), (3, 31)], _meas_i["A_外标"]["points"]
     assert _meas_i["B_内标"]["points"] == [(1, 2.0), (1, 2.2), (2, 4.0), (2, 4.2), (3, 6.0), (3, 6.2)], _meas_i["B_内标"]["points"]
     assert _meas_i["A_外标"]["spike_C"] == [12.34, 12.10, 12.20, 12.05], _meas_i["A_外标"]["spike_C"]
@@ -514,5 +530,48 @@ if __name__ == "__main__":
         ["目标物", "浓度mg/L", "分析物峰面积"], [str(c.value) for c in wb2["曲线拟合"][1]]
     os.remove(out2)
 
+    # ⑥ 样液浓度单位 ng/mL: 列头带单位 (读侧前缀定位 + 返回 conc_unit); 旧 (mg/L) 表头兼容 = 上面默认路径
+    assert _cin_unit("实测加标C(µg/mL)") == "mg/L", "未知单位应回退 mg/L"
+    out_u = out + ".unit.xlsx"
+    write_template(out_u, groups, curve_meta, n_points=3, conc_unit="ng/mL")
+    _wb_u = openpyxl.load_workbook(out_u)
+    assert [str(c.value).strip() for c in _wb_u["精密度&回收率"][1]] == \
+        ["目标物", "实测加标C(ng/mL)", "称样量m(g)"]
+    _pr_u = _wb_u["精密度&回收率"]                                     # 每物 2 对 C/m (ng/mL)
+    for i, (c, m) in enumerate([(12340.0, 0.5004), (12100.0, 0.4998)], start=2):
+        _pr_u.cell(i, 1, "A_外标"); _pr_u.cell(i, 2, c); _pr_u.cell(i, 3, m)
+    for i, (c, m) in enumerate([(21800.0, 0.5001), (21500.0, 0.4999)], start=4):
+        _pr_u.cell(i, 1, "B_内标"); _pr_u.cell(i, 2, c); _pr_u.cell(i, 3, m)
+    _cv_u = _wb_u["曲线拟合"]                                          # 曲线浓度列恒为 mg/L
+    for i, (n, x, a) in enumerate([("A_外标", 1, 100), ("A_外标", 2, 200), ("A_外标", 3, 300)], start=2):
+        _cv_u.cell(i, 1, n); _cv_u.cell(i, 2, x); _cv_u.cell(i, 3, a)
+    for i, (n, x, a, isa) in enumerate(
+            [("B_内标", 1, 100, 50), ("B_内标", 2, 200, 50), ("B_内标", 3, 300, 50)], start=5):
+        _cv_u.cell(i, 1, n); _cv_u.cell(i, 2, x); _cv_u.cell(i, 3, a); _cv_u.cell(i, 4, isa)
+    _tg_u = _wb_u["目标物"]
+    _tg_u.cell(2, 5, 100.0); _tg_u.cell(2, 6, 100); _tg_u.cell(3, 5, 200.0); _tg_u.cell(3, 6, 100)
+    _wb_u.save(out_u)
+    _meas_u, _cu_u = read_template(out_u)
+    assert _cu_u == "ng/mL", _cu_u
+    assert _meas_u["A_外标"]["spike_C"] == [12340.0, 12100.0], _meas_u["A_外标"]["spike_C"]
+    assert _meas_u["B_内标"]["spike_C"] == [21800.0, 21500.0]
+    os.remove(out_u)
+
+    # 合并格式 (⑥ C/m 并入目标物表) + ng/mL 列头: 前缀定位取数 + 单位回读
+    out_m = out + ".merged.xlsx"
+    _wb_m = openpyxl.Workbook()
+    _ws_m = _wb_m.active; _ws_m.title = "目标物"
+    _header(_ws_m, ["目标物", "分组", "实测加标C(ng/mL)", "称样量m(g)", "标液浓度(mg/L)", "加标体积(μL)"])
+    for r, (c, m) in enumerate([(50.0, 0.5), (48.0, 0.5)], start=2):
+        _ws_m.cell(r, 1, "A"); _ws_m.cell(r, 3, c); _ws_m.cell(r, 4, m)
+        _ws_m.cell(r, 5, 100.0); _ws_m.cell(r, 6, 100)
+    _long_sheet(_wb_m, "曲线拟合", ["目标物", "浓度mg/L", "分析物峰面积"],
+                [("A", 1, 100), ("A", 2, 200), ("A", 3, 300)])
+    _wb_m.save(out_m)
+    _meas_m, _cu_m = read_template(out_m)
+    assert _cu_m == "ng/mL" and _meas_m["A"]["spike_C"] == [50.0, 48.0], (_cu_m, _meas_m["A"]["spike_C"])
+    assert _meas_m["A"]["spike_std_conc"] == 100.0 and _meas_m["A"]["spike_add_vol"] == 100.0
+    os.remove(out_m)
+
     os.remove(out)
-    print("OK 测量数据模板写读自洽 (无说明sheet; 目标物含内标6列/全外标5列 X/p/x_pred删→合并段派生; 外标+内标; 全外标曲线3列; 曲线预填n_points; ⑥加标C/m独立表+n_reps行; 进样次数倍增曲线/精密度行)")
+    print("OK 测量数据模板写读自洽 (无说明sheet; 目标物含内标6列/全外标5列 X/p/x_pred删→合并段派生; 外标+内标; 全外标曲线3列; 曲线预填n_points; ⑥加标C/m独立表+n_reps行; 进样次数倍增曲线/精密度行; ⑥列头单位mg/L·ng/mL往返+合并格式前缀定位)")

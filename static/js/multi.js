@@ -62,6 +62,12 @@ function wireExcel() {
 }
 
 // ---- ① 总述 ----
+// 样液浓度单位 ↔ 结果单位 自动配对 (1 µg/g≡1 mg/kg 仅显示名不同); 切换样液单位时覆盖式联动, 此后仍可手改结果单位
+const CONC_UNIT_PAIR = { "mg/L": "mg/kg", "ng/mL": "µg/g" };
+function updateModelTip() {   // 侧栏测量模型 tooltip: C 单位跟随①所选样液浓度单位 (覆盖 index.html 静态串)
+  const t = document.getElementById("meta-model");
+  if (t) t.title = `式中：w—含量；C—样液浓度(${S().scalars.mu_conc_unit || "mg/L"})；V—定容体积(mL)；m—称样量(g)`;
+}
 function renderT1() {
   const c = document.getElementById("t1"); c.innerHTML = "";
   const hdr = el("div", "card"); hdr.append(cardTitle("页眉信息"));
@@ -72,11 +78,20 @@ function renderT1() {
   hdr.appendChild(hg);
 
   const u = el("div", "card"); u.append(cardTitle("结果单位设置"));
-  const ug = el("div", "grid-3");
-  bindSelect(ug, "单位", "mu_unit", meta().unit_options.map(x => ({ value: x, label: x })));
-  bindSelect(ug, "结果修约方式", "mu_round_mode", [{ value: "有效数字", label: "有效数字" }, { value: "小数位数", label: "小数位数" }]);
-  bindInput(ug, "位数", "mu_round_nd", { type: "number", attrs: { step: 1, min: 0 } });
-  u.appendChild(ug);
+  const ug = el("div", "grid-2");   // 第一行: 样液浓度单位(左) | 结果单位(右)
+  let unitSel;
+  bindSelect(ug, "样液浓度单位", "mu_conc_unit", (meta().cin_unit_options || ["mg/L", "ng/mL"]).map(x => ({ value: x, label: x })), {
+    on: v => {   // 切样液单位 → 结果单位自动配对 (mg/L→mg/kg, ng/mL→µg/g; 此后仍可手改); ⑥ 模板列头按此单位生成
+      const pair = CONC_UNIT_PAIR[v];
+      if (pair) { S().scalars.mu_unit = pair; unitSel.value = pair; }
+      updateModelTip();
+    },
+  });
+  unitSel = bindSelect(ug, "结果单位", "mu_unit", meta().unit_options.map(x => ({ value: x, label: x })));
+  const ug2 = el("div", "grid-2");  // 第二行: 结果修约方式 | 位数
+  bindSelect(ug2, "结果修约方式", "mu_round_mode", [{ value: "有效数字", label: "有效数字" }, { value: "小数位数", label: "小数位数" }]);
+  bindInput(ug2, "位数", "mu_round_nd", { type: "number", attrs: { step: 1, min: 0 } });
+  u.appendChild(ug); u.appendChild(ug2);
   const uh = el("small", "muted"); uh.textContent = "位数比标准规定多一位（AI 识别标准时已自动 +1）"; u.appendChild(uh);
 
   const env = el("div", "card"); env.append(cardTitle("测量环境"));
@@ -102,6 +117,7 @@ function renderT1() {
   pf.appendChild(aiBtn);
   const aiMsg = el("div", "ai-msg"); aiMsg.id = "ai-msg"; pf.appendChild(aiMsg);
   c.appendChild(pf);
+  updateModelTip();
 }
 function balanceMPEmg(m) { return m <= 50 ? 0.5 : m <= 200 ? 1.0 : 1.5; }
 function deriveBalanceTol() {
@@ -1112,7 +1128,7 @@ function renderT5(meta) {
   bindInput(g, "每次测定进样次数", "mu_fr_inj", { type: "number", attrs: { min: 1, step: 1 } });
   card.appendChild(g);
   const note = el("small"); note.className = "muted";
-  note.textContent = "⑥ 加标数据走 Excel「精密度&回收率」表(每物多组平行样)。下载模板→填→上传,系统按 R=C/C₀、w=C·V/m 自动算。";
+  note.textContent = "⑥ 加标数据走 Excel「精密度&回收率」表(每物多组平行样, C 按①所选样液浓度单位填写)。下载模板→填→上传,系统按 R=C/C₀、w=C·V/m 自动算。";
   card.appendChild(note);
   c.appendChild(card);
 }
@@ -1143,6 +1159,7 @@ async function downloadTemplate() {
       topo_rows, curve_meta: S().curve_meta,
       n_points: Number(S().scalars.mu_curve_npoints) || 3, n_reps: Number(S().scalars.mu_spike_nrep) || 2,
       n_inj_point: Number(S().scalars.mu_curve_inj) || 1, n_inj_meas: Number(S().scalars.mu_fr_inj) || 1,
+      conc_unit: S().scalars.mu_conc_unit || "mg/L",   // ⑥ 加标C 列头单位
     });
     const _parts = [S().scalars.mu_meta_ref, S().scalars.mu_title].map(x => (x || "").trim()).filter(Boolean);
     const url = URL.createObjectURL(blob); const a = el("a"); a.href = url; a.download = (_parts.join("_") || "不确定度评估") + ".xlsx"; a.click(); URL.revokeObjectURL(url);
@@ -1152,7 +1169,18 @@ function uploadTemplate() {
   const inp = el("input"); inp.type = "file"; inp.accept = ".xlsx";
   inp.onchange = async () => {
     const f = inp.files[0]; if (!f) return;
-    try { const r = await templateMultiUpload(f); S().meas = r.meas; alert(`已解析测量数据: ${Object.keys(r.meas || {}).length} 种目标物`); }
+    try {
+      const r = await templateMultiUpload(f); S().meas = r.meas;
+      let extra = "";
+      if (r.conc_unit && r.conc_unit !== (S().scalars.mu_conc_unit || "mg/L")) {   // 模板列头单位优先: 防止 ng/mL 模板被按 mg/L 解读
+        S().scalars.mu_conc_unit = r.conc_unit;
+        const pair = CONC_UNIT_PAIR[r.conc_unit];
+        if (pair) S().scalars.mu_unit = pair;
+        renderT1();   // 重渲①区刷新两个下拉显示值
+        extra = `；模板加标C列为 ${r.conc_unit}，已切换样液浓度单位(结果单位联动 ${S().scalars.mu_unit || ""})`;
+      }
+      alert(`已解析测量数据: ${Object.keys(r.meas || {}).length} 种目标物${extra}`);
+    }
     catch (e) { alert("解析失败: " + e.message); }
   };
   inp.click();

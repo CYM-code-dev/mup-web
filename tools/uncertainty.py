@@ -23,11 +23,18 @@ SQRT6 = math.sqrt(6.0)
 
 # 结果单位相对 mg/kg 的换算因子 (display 层用; 引擎数学无量纲, 不依赖)。
 # 1% (m/m) = 10000 mg/kg, 故 mg/kg→% 为 ×1e-4。
-UNIT_OPTIONS = ("mg/kg", "µg/kg", "g/kg", "%")
+UNIT_OPTIONS = ("mg/kg", "µg/kg", "g/kg", "µg/g", "%")
 
 # 结果值换算: mg/kg → unit 为 ×10**exp (1 mg/kg = 1e3 µg/kg = 1e-3 g/kg = 1e-4 %)。
 # w = C·V/m (C mg/L, V mL, m g) 天然得 mg/kg; 选其他单位时乘 10**exp。
-UNIT_EXP = {"mg/kg": 0, "µg/kg": 3, "g/kg": -3, "%": -4}
+# µg/g ≡ mg/kg (exp 0): 数值与 mg/kg 相同, 仅报告显示单位不同 (与样液 ng/mL 配对)。
+UNIT_EXP = {"mg/kg": 0, "µg/kg": 3, "g/kg": -3, "µg/g": 0, "%": -4}
+
+# 样液浓度(⑤/⑥ 实测加标C)的可选单位: 引擎在装配层统一换算为 mg/L 再参与曲线/回收率计算,
+# 测定值按 10**(UNIT_EXP[unit] + CIN_UNIT_EXP[cin]) 折算 (ng/mL+µg/g → ×10⁻³)。
+# 与证书侧 CONC_UNIT_* 刻意分开 (语义不同, 值恰好部分重合)。
+CIN_UNIT_OPTIONS = ("mg/L", "ng/mL")
+CIN_UNIT_EXP = {"mg/L": 0, "ng/mL": -3}
 
 # 标准品证书浓度的可选单位 (高浓液标): 内部统一换算为 mg/L 再参与计算/报告。
 # µg/mL ≡ mg/L (exp 0); mg/mL、g/L = 1e3 mg/L (exp 3); µg/L、ng/mL = 1e-3 mg/L (exp -3)。
@@ -602,6 +609,12 @@ def selfcheck():
     w = [c * vol / m for c, m in zip(MUP_SPIKE_C, MUP_SPIKE_M)]
     assert R == MUP_RECOVERY, f"加标派生回收率不一致: {R}"
     assert round_sf(sum(w) / len(w), 3) == 16.1, f"加标派生结果 X 不一致: {sum(w)/len(w)}"
+    # 单位换算恒等式: µg/g≡mg/kg; ng/mL→µg/kg 与 mg/L→mg/kg 数值路径相同 (ng/g ≡ µg/kg)
+    assert UNIT_EXP["µg/g"] == 0 and CIN_UNIT_EXP["ng/mL"] == -3, "单位换算指数"
+    assert UNIT_EXP["µg/kg"] + CIN_UNIT_EXP["ng/mL"] == 0, "ng/mL+µg/kg 合成指数应为0"
+    assert UNIT_EXP["µg/g"] + CIN_UNIT_EXP["ng/mL"] == -3, "ng/mL+µg/g 合成指数应为-3"
+    assert set(CIN_UNIT_OPTIONS) == set(CIN_UNIT_EXP), "样液单位表 options/exp 不一致"
+    assert "µg/g" in UNIT_OPTIONS and all(u in UNIT_EXP for u in UNIT_OPTIONS), "结果单位表不一致"
     ok_round = True
     allok &= ok_round
     print(f"  {'OK ' if ok_round else 'FAIL'} 修约四舍六入五成双 + 加标派生(R==MUP_RECOVERY, X==16.1)")
