@@ -63,7 +63,10 @@ function wireExcel() {
 
 // ---- ① 总述 ----
 // 样液浓度单位 ↔ 结果单位 自动配对 (1 µg/g≡1 mg/kg 仅显示名不同); 切换样液单位时覆盖式联动, 此后仍可手改结果单位
-const CONC_UNIT_PAIR = { "mg/L": "mg/kg", "ng/mL": "µg/g" };
+const CONC_UNIT_PAIR = { "mg/L": "mg/kg", "µg/mL": "mg/kg", "ng/mL": "µg/g" };
+// 样液浓度单位工具: muCu() 当前单位串; muK() 显示换算 (mg/L公式空间→录入单位; ng/mL→×1000; µg/mL≡mg/L→1)
+function muCu() { return S().scalars.mu_conc_unit || "mg/L"; }
+function muK() { const e = ((S().meta || {}).cin_unit_exp || {})[muCu()] ?? 0; return 10 ** -e; }
 function updateModelTip() {   // 侧栏测量模型 tooltip: C 单位跟随①所选样液浓度单位 (覆盖 index.html 静态串)
   const t = document.getElementById("meta-model");
   if (t) t.title = `式中：w—含量；C—样液浓度(${S().scalars.mu_conc_unit || "mg/L"})；V—定容体积(mL)；m—称样量(g)`;
@@ -80,10 +83,11 @@ function renderT1() {
   const u = el("div", "card"); u.append(cardTitle("结果单位设置"));
   const ug = el("div", "grid-2");   // 第一行: 样液浓度单位(左) | 结果单位(右)
   let unitSel;
-  bindSelect(ug, "样液浓度单位", "mu_conc_unit", (meta().cin_unit_options || ["mg/L", "ng/mL"]).map(x => ({ value: x, label: x })), {
-    on: v => {   // 切样液单位 → 结果单位自动配对 (mg/L→mg/kg, ng/mL→µg/g; 此后仍可手改); ⑥ 模板列头按此单位生成
+  bindSelect(ug, "样液浓度单位", "mu_conc_unit", (meta().cin_unit_options || ["mg/L", "µg/mL", "ng/mL"]).map(x => ({ value: x, label: x })), {
+    on: v => {   // 切样液单位 → 结果单位自动配对 (此后仍可手改); ③ 稀释链/⑥ Excel 模板列头按此单位
       const pair = CONC_UNIT_PAIR[v];
       if (pair) { S().scalars.mu_unit = pair; unitSel.value = pair; }
+      re3();   // ③ 中间液/工作链列头与储备液锚点跟随
       updateModelTip();
     },
   });
@@ -747,7 +751,7 @@ function solidStockConcMg(groupName, analyteName) {
     && (r.目标物 || "").trim() === (analyteName || "").trim());
   if (!r) return null;
   const m = Number(r["m_std(g)"]), p = Number(r["纯度p"]), fv = parseVesselNominal(r["储备液容量瓶(mL)"]);
-  return (m > 0 && p > 0 && fv > 0) ? (m * p * 1e6 / fv) : null;
+  return (m > 0 && p > 0 && fv > 0) ? (m * p * 1e6 / fv * muK()) : null;   // mg/L 公式 ×muK() → ①所选样液单位
 }
 
 // 固体组中间液混合后各物质目标浓度均值 (mg/L, 显示串) = 各源 母液浓度×移取体积/容量瓶 修约后取均值。
@@ -788,9 +792,9 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
     const tbl = el("table", "grid");
     const thead = el("thead"); const trh = el("tr");
     const heads = ["源", direct ? "点位" : "中间液分组"];
-    if (isSolid) heads.push("母液浓度 (mg/L)");
+    if (isSolid) heads.push(`母液浓度 (${muCu()})`);
     heads.push("移液量器", "移取体积 (mL)", direct ? "点位容量瓶" : "中间液容量瓶");
-    if (isSolid) heads.push("目标浓度 (mg/L)");
+    if (isSolid) heads.push(`目标浓度 (${muCu()})`);
     heads.push("");
     heads.forEach(t => { const th = el("th"); th.textContent = t; trh.appendChild(th); });
     thead.appendChild(trh); tbl.appendChild(thead);
@@ -964,17 +968,17 @@ function workChainCfg(meta, rows, onChange, parallel = false) {
   return {
     columns: [
       serial
-        ? { key: "母液浓度(mg/L)", type: "text", label: "母液浓度(mg/L)", editable: r => rows.indexOf(r) === 0, computed: r => {
+        ? { key: "母液浓度(mg/L)", type: "text", label: `母液浓度(${muCu()})`, editable: r => rows.indexOf(r) === 0, computed: r => {
               const i = rows.indexOf(r);
               return i > 0 ? rows[i - 1]["目标浓度(mg/L)"] : r["母液浓度(mg/L)"];   // row0 默认中间液目标浓度均值(渲染期填入), 用户可改; i>0 取上行目标浓度
             }, onSet: r => { _lockMother(r, rows); const s = concStr(r["母液浓度(mg/L)"]); if (s != null) r["母液浓度(mg/L)"] = s; } }
-        : { key: "母液浓度(mg/L)", type: "text", label: "母液浓度(mg/L)", onSet: r => { _lockMother(r, rows); const s = concStr(r["母液浓度(mg/L)"]); if (s != null) r["母液浓度(mg/L)"] = s; } },
+        : { key: "母液浓度(mg/L)", type: "text", label: `母液浓度(${muCu()})`, onSet: r => { _lockMother(r, rows); const s = concStr(r["母液浓度(mg/L)"]); if (s != null) r["母液浓度(mg/L)"] = s; } },
       { key: "pip_vessel", type: "select", label: "移取量器", options: meta.pip_opts,
         onSet: r => { if (r.pip_vessel) { const s = volStr(parseVesselNominal(r.pip_vessel)); if (s != null) r.pip_vol = s; } } },   // 选量器 → 按标称体积自动填移取体积 (手改可覆盖)
       { key: "pip_vol", type: "number", label: "移取体积(mL)", step: "any",
         onSet: r => { const s = volStr(r.pip_vol); if (s != null) r.pip_vol = s; } },   // 移取体积 volStr 修约(<1mL 保留 3 位 μL 精度)
       { key: "flask_vessel", type: "select", label: "定容量器", options: meta.makeup_opts, seed: WORK_FLASK_DEFAULT },
-      { key: "目标浓度(mg/L)", computed: r => targetStr(r["母液浓度(mg/L)"], r.pip_vol, parseVesselNominal(r.flask_vessel)) },
+      { key: "目标浓度(mg/L)", label: `目标浓度(${muCu()})`, computed: r => targetStr(r["母液浓度(mg/L)"], r.pip_vol, parseVesselNominal(r.flask_vessel)) },
     ],
     rows, dynamic: true, ctx: S(), onChange,
   };
@@ -1128,7 +1132,7 @@ function renderT5(meta) {
   bindInput(g, "每次测定进样次数", "mu_fr_inj", { type: "number", attrs: { min: 1, step: 1 } });
   card.appendChild(g);
   const note = el("small"); note.className = "muted";
-  note.textContent = "⑥ 加标数据走 Excel「精密度&回收率」表(每物多组平行样, C 按①所选样液浓度单位填写)。下载模板→填→上传,系统按 R=C/C₀、w=C·V/m 自动算。";
+  note.textContent = "⑥ 加标数据走 Excel「精密度&回收率」表(每物多组平行样)。下载模板→填→上传,系统按 R=C/C₀、w=C·V/m 自动算。加标C/曲线浓度/标液浓度三列均按①所选样液浓度单位填写与生成列头。";
   card.appendChild(note);
   c.appendChild(card);
 }

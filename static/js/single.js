@@ -62,10 +62,13 @@ async function loadDraft(name) {
 
 // ---- ① 总述 ----
 // 样液浓度单位 ↔ 结果单位 自动配对 (1 µg/g≡1 mg/kg 仅显示名不同); 切换样液单位时覆盖式联动, 此后仍可手改结果单位
-const CONC_UNIT_PAIR = { "mg/L": "mg/kg", "ng/mL": "µg/g" };
+const CONC_UNIT_PAIR = { "mg/L": "mg/kg", "µg/mL": "mg/kg", "ng/mL": "µg/g" };
+// 样液浓度单位工具: cuOf() 当前单位串; cuK() 显示换算 (mg/L公式空间→录入单位; ng/mL→×1000; µg/mL≡mg/L→1)
+function cuOf() { return S().scalars.conc_unit || "mg/L"; }
+function cuK() { const e = ((S().meta || {}).cin_unit_exp || {})[cuOf()] ?? 0; return 10 ** -e; }
 function updateModelTip() {   // 侧栏测量模型 tooltip: C 单位跟随①所选样液浓度单位 (覆盖 index.html 静态串)
   const t = document.getElementById("meta-model");
-  if (t) t.title = `式中：w—含量；C—样液浓度(${S().scalars.conc_unit || "mg/L"})；V—定容体积(mL)；m—称样量(g)`;
+  if (t) t.title = `式中：w—含量；C—样液浓度(${cuOf()})；V—定容体积(mL)；m—称样量(g)`;
 }
 function renderT1() {
   const c = document.getElementById("t1"); c.innerHTML = "";
@@ -79,11 +82,11 @@ function renderT1() {
   const u = el("div", "card"); u.append(cardTitle("结果单位设置"));
   const ug = el("div", "grid-2");   // 第一行: 样液浓度单位(左) | 结果单位(右)
   let unitSel;
-  bindSelect(ug, "样液浓度单位", "conc_unit", (meta().cin_unit_options || ["mg/L", "ng/mL"]).map(x => ({ value: x, label: x })), {
-    on: v => {   // 切样液单位 → 结果单位自动配对 + ⑤ 列头/R/w 重算 + 模型提示刷新
+  bindSelect(ug, "样液浓度单位", "conc_unit", (meta().cin_unit_options || ["mg/L", "µg/mL", "ng/mL"]).map(x => ({ value: x, label: x })), {
+    on: v => {   // 切样液单位 → 结果单位自动配对 + ④ 锚点/列头 + ⑤ 列头/R/w 重算 + 模型提示刷新 (存量值不换算)
       const pair = CONC_UNIT_PAIR[v];
       if (pair) { S().scalars.unit = pair; unitSel.value = pair; }
-      renderT5(meta()); updateModelTip();
+      renderT3(meta()); renderT4(meta()); renderT5(meta()); updateModelTip();
     },
   });
   unitSel = bindSelect(ug, "结果单位", "unit", meta().unit_options.map(x => ({ value: x, label: x })), { on: () => renderT5(meta()) });   // 单位变 → ⑤ 标签(含单位)+ 理论目标物含量 + 测定值 w 重算
@@ -424,7 +427,7 @@ function workGridCfg(meta) {
   const liquid = sc.stock_source === "liquid_dilute"; // 高浓液标: 首行母液浓度 = 证书浓度(自动算)
   return {
     columns: [
-      { key: "母液浓度(mg/L)", type: "text", label: "母液浓度(mg/L)",
+      { key: "母液浓度(mg/L)", type: "text", label: `母液浓度(${cuOf()})`,   // key 为存储标识恒不改, label 跟随单位
         editable: r => { const i = S().editors.work_df.indexOf(r);
           if (i === 0 && (solid || liquid)) return false;   // 纯品/液标: 首行=储备液或证书浓度, 只读
           return serial ? i === 0 : true; },               // 逐级稀释仅首行可编; 非逐级全可编
@@ -439,7 +442,7 @@ function workGridCfg(meta) {
       { key: "移取体积(mL)", type: "number", label: "移取体积(mL)", step: "any",
         onSet: r => { const s = volStr(r["移取体积(mL)"]); if (s != null) r["移取体积(mL)"] = s; } },
       { key: "定容量器", type: "select", label: "定容量器", options: meta.makeup_opts, seed: WORK_FLASK_DEFAULT },
-      { key: "目标浓度(mg/L)", label: "目标浓度(mg/L)", computed: r => targetStr(r["母液浓度(mg/L)"], r["移取体积(mL)"], parseVesselNominal(r["定容量器"])) },
+      { key: "目标浓度(mg/L)", label: `目标浓度(${cuOf()})`, computed: r => targetStr(r["母液浓度(mg/L)"], r["移取体积(mL)"], parseVesselNominal(r["定容量器"])) },
     ],
     rows: S().editors.work_df, dynamic: true, ctx: S(),
     noteId: "work-note",
@@ -471,20 +474,21 @@ function targetStr(c, v, fnom) {
   }
   return concStr(val);
 }
-// 纯品称量储备液浓度 (mg/L) = m_std(g)·purity·1e6 / 储备液容量瓶(mL); purity 已存为小数 → 结果即 mg/L
+// 纯品称量储备液浓度 = m_std(g)·purity·1e6 / 储备液容量瓶(mL) → mg/L, ×cuK() 换算为①所选样液浓度单位
+// (链首锚点即录入单位空间, 后续 targetStr 纯比例计算自动一致)
 function solidStockConc() {
   const s = S().scalars;
   const m = Number(s.m_std), p = Number(s.purity), v = Number(s.stock_flask_s);
-  return (m > 0 && p > 0 && v > 0) ? concStr(m * p * 1e6 / v) : null;
+  return (m > 0 && p > 0 && v > 0) ? concStr(m * p * 1e6 / v * cuK()) : null;
 }
-// 高浓液标储备液浓度 (mg/L) = 证书浓度(mg/L) × 移取体积 / 储备液容量瓶; 移取体积或容量瓶空 → 暂不算 (留空, 补全后自动生成)
+// 高浓液标储备液浓度 = 证书浓度(按证书单位归一 mg/L, 数值可能不变) × 移取体积 / 储备液容量瓶 → mg/L, ×cuK() 换算为样液单位
 function liquidStockConc() {
   const s = S().scalars;
   const exp = ((S().meta || {}).conc_unit_exp || {})[s.C_cert_unit || "mg/L"] ?? 0;
   const cMgL = Number(s.C_cert) * Math.pow(10, exp);
   const pv = Number(s.pip_vol_actual);
   const fv = Number(s.stock_flask_s);
-  return (cMgL > 0 && pv > 0 && fv > 0) ? concStr(cMgL * pv / fv) : null;
+  return (cMgL > 0 && pv > 0 && fv > 0) ? concStr(cMgL * pv / fv * cuK()) : null;
 }
 
 // ---- LIMS 工作液溯源 ----
@@ -525,7 +529,14 @@ async function applyTrace() {
   if (r.error) { S().trace_fb = { errors: [r.error] }; renderT3(meta()); return; }
   Object.assign(S().scalars, r.scalars);
   if (r.rows) Object.assign(S().rows, r.rows);
-  if (r.work_df && r.work_df.length) S().editors.work_df = r.work_df;
+  if (r.work_df && r.work_df.length) {
+    const kk = cuK();   // 溯源链母液浓度恒 mg/L → ①所选样液浓度单位 (mg/L/µg/mL 时 k=1 原样)
+    if (kk !== 1) r.work_df.forEach(row => {
+      const v = Number(row["母液浓度(mg/L)"]);
+      if (isFinite(v)) row["母液浓度(mg/L)"] = concStr(v * kk);
+    });
+    S().editors.work_df = r.work_df;
+  }
   S().trace_fb = r.feedback;
   renderT3(meta());
 }
@@ -603,8 +614,8 @@ function pointsGridCfg(meta) {
   const linked = S().scalars.curve_method === "外标法" && S().scalars.curve_link_chain;
   const cols = [
     linked
-      ? { key: "浓度mg/L", label: "浓度mg/L", computed: (r, ctx) => curveChainTargets()[ctx.editors.points_df.indexOf(r)] ?? null }
-      : { key: "浓度mg/L", type: "number", label: "浓度mg/L", step: "any" },
+      ? { key: "浓度mg/L", label: `浓度${cuOf()}`, computed: (r, ctx) => curveChainTargets()[ctx.editors.points_df.indexOf(r)] ?? null }   // key 为存储标识恒不改
+      : { key: "浓度mg/L", type: "number", label: `浓度${cuOf()}`, step: "any" },
     { key: "分析物峰面积", type: "number", label: "分析物峰面积", step: 1 },
   ];
   if (isIS) cols.push({ key: "内标峰面积", type: "number", label: "内标峰面积", step: 1 });
@@ -620,11 +631,11 @@ function renderT5(meta) {
   c.appendChild(infl);
   const card = el("div", "card"); card.append(cardTitle("精密度 & 回收率"));
   const g = el("div", "grid-5");
-  bindInput(g, "标液浓度 (mg/L)", "spike_std_conc", { type: "number", on: recompSpike });
+  bindInput(g, `标液浓度 (${cuOf()})`, "spike_std_conc", { type: "number", on: recompSpike });
   bindInput(g, "加标体积 (μL)", "spike_add_vol", { type: "number", on: recompSpike });
   const volInp = bindInput(g, "定容体积 V (mL)", "spike_vol", { type: "number", on: recompSpike });
   volInp.id = "in-spike-vol";
-  const theorInp = bindInput(g, "理论加标 C₀ (mg/L)", "spike_theor", { type: "number" });
+  const theorInp = bindInput(g, `理论加标 C₀ (${cuOf()})`, "spike_theor", { type: "number" });
   theorInp.id = "in-spike-theor";
   const massInp = bindInput(g, `理论目标物含量 (${S().scalars.unit})`, "spike_add_mass", { type: "number" });
   massInp.id = "in-spike-mass";
@@ -636,7 +647,7 @@ function renderT5(meta) {
 }
 function spikeGridCfg(meta) {
   const exp = meta.unit_exp[S().scalars.unit] ?? 0;
-  const cexp = (meta.cin_unit_exp || {})[S().scalars.conc_unit || "mg/L"] ?? 0;   // ⑤ 实测C 录入单位 → mg/L (理论C₀/标液恒 mg/L)
+  const cexp = (meta.cin_unit_exp || {})[S().scalars.conc_unit || "mg/L"] ?? 0;   // 实测C 录入单位 → mg/L (w 折算用)
   const cu = S().scalars.conc_unit || "mg/L";
   const rm = S().scalars.round_mode; const nd = Number(S().scalars.round_nd);
   const rnd = rm === "有效数字" ? round_sf : round_dp;
@@ -644,7 +655,7 @@ function spikeGridCfg(meta) {
     columns: [
       { key: "实测加标 C (mg/L)", type: "number", label: `实测加标 C (${cu})`, step: "any" },   // key 为存储标识恒不改, 仅 label 跟随单位
       { key: "称样量 m (g)", type: "number", label: "称样量 m (g)", step: 0.0001 },
-      { key: "回收率 R", label: "回收率 R", computed: r => (r["实测加标 C (mg/L)"] != null && S().scalars.spike_theor) ? round_sf(r["实测加标 C (mg/L)"] * 10 ** cexp / S().scalars.spike_theor, 3) : null, format: v => resultStr(v, "有效数字", 3) },
+      { key: "回收率 R", label: "回收率 R", computed: r => (r["实测加标 C (mg/L)"] != null && S().scalars.spike_theor) ? round_sf(r["实测加标 C (mg/L)"] / S().scalars.spike_theor, 3) : null, format: v => resultStr(v, "有效数字", 3) },   // C 与 spike_theor 同为录入单位 → 同空间直除
       { key: "测定值 w", label: "测定值 w", computed: r => { const c = r["实测加标 C (mg/L)"], m = r["称样量 m (g)"]; return (c != null && m > 0) ? rnd(c * 10 ** cexp * S().scalars.spike_vol / m * 10 ** exp, nd) : null; }, format: v => resultStr(v, rm, nd) },
     ],
     rows: S().editors.spike_df, dynamic: true, ctx: S(),
@@ -676,15 +687,18 @@ function syncSpikeVol() {
 }
 function recompSpike() {
   const s = S().scalars;
-  const c0 = (s.spike_std_conc && s.spike_add_vol && s.spike_vol) ? s.spike_std_conc * s.spike_add_vol * 1e-3 / s.spike_vol : 0;
-  if (s.spike_std_conc != null) s.spike_theor = roundC(c0);
+  const cexp = (meta().cin_unit_exp || {})[s.conc_unit || "mg/L"] ?? 0;
+  const c0 = (s.spike_std_conc && s.spike_add_vol && s.spike_vol) ? s.spike_std_conc * s.spike_add_vol * 1e-3 / s.spike_vol : 0;   // 录入单位空间
+  const c0m = c0 * 10 ** cexp;                     // 归一 mg/L (规范修约空间)
+  // spike_theor: 先在 mg/L 空间规范修约(与历史值逐位一致), 再换回录入单位; 外层 roundC 清 ×1000 浮点噪声
+  if (s.spike_std_conc != null) s.spike_theor = roundC(roundC(c0m) * 10 ** -cexp);
   // 结果修约 (同 测定值 w): 有效数字→round_sf / 小数位数→round_dp, 位数 nd; 随 §1 修约设置变化
   const exp = meta().unit_exp[s.unit] ?? 0;
   const rnd = s.round_mode === "有效数字" ? round_sf : round_dp;
   const nd = Number(s.round_nd);
   const m = parseFloat(s.m_sample_raw);
-  // 理论目标物含量 = C₀·V/m·10^exp (同模型 测定值 w=c·V/m·10^exp, 以理论 C₀ 代实测 c; m 取 ② 称样量)
-  s.spike_add_mass = (c0 && s.spike_vol && isFinite(m) && m > 0) ? rnd(c0 * s.spike_vol / m * 10 ** exp, nd) : null;
+  // 理论目标物含量 = C₀(mg/L)·V/m·10^exp (同模型 测定值 w; 以 mg/L 空间理论 C₀ 代实测 c; m 取 ② 称样量)
+  s.spike_add_mass = (c0 && s.spike_vol && isFinite(m) && m > 0) ? rnd(c0m * s.spike_vol / m * 10 ** exp, nd) : null;
   const ti = document.getElementById("in-spike-theor"); if (ti) ti.value = s.spike_theor ?? "";
   const mi = document.getElementById("in-spike-mass"); if (mi) mi.value = s.spike_add_mass != null ? resultStr(s.spike_add_mass, s.round_mode, s.round_nd) : "";
   const gh = document.getElementById("grid-spike");

@@ -40,7 +40,8 @@ _USE_GRP = {"pip_s": 0, "pip_g": 1, "pip_p": 1, "cylinder": 1, "flask": 2}
 # 分度吸量管分度值 (mL): 选量器时判 "V 是否为分度值整数倍 (可直读)" → 优先分度吸管, 否则移液枪
 _PIP_G_SUB = {1: 0.01, 2: 0.02, 5: 0.05, 10: 0.1, 20: 0.1}
 # ⑤ 表列 key 为稳定存储标识 (草稿/前端 grid 按此读写), 与显示单位解耦:
-# 样液浓度单位 (conc_unit, mg/L/ng/mL) 只影响前端列 label 与引擎装配层换算, key 恒不改。
+# 样液浓度单位 (conc_unit, mg/L/µg/mL/ng/mL) 只影响前端列 label 与引擎装配层换算, key 恒不改。
+# 同理: ④ 曲线列 "浓度mg/L"、稀释链 "母液浓度(mg/L)"/"目标浓度(mg/L)" 等 key 均为存储标识。
 _C_COL, _M_COL, _R_COL, _W_COL = "实测加标 C (mg/L)", "称样量 m (g)", "回收率 R", "测定值 w"
 
 
@@ -353,7 +354,7 @@ def build_params_single(state):
         x = r.get("浓度mg/L")
         if _is_na(x):
             continue
-        x = float(x)
+        x = float(x) * 10 ** cexp          # 曲线点按样液所选单位录入 → 归一 mg/L (fit 与 x_pred 同空间)
         a = _f(r.get("分析物峰面积"))
         if curve_method == "内标法":
             isa = r.get("内标峰面积")
@@ -378,7 +379,7 @@ def build_params_single(state):
     pairs = [(c * 10 ** cexp, m) for c, m in spike_rows if c is not None and m is not None and m > 0]
     if pairs:
         replicates = [_rnd(c * spike_vol / m * 10 ** exp, nd) for c, m in pairs]
-        recovery = [round_sf(c / spike_theor, 3) if spike_theor else float("nan") for c, _ in pairs]
+        recovery = [round_sf(c / (spike_theor * 10 ** cexp), 3) if spike_theor else float("nan") for c, _ in pairs]   # spike_theor 录入单位 → 同归一 mg/L
         X = _rnd(sum(c * spike_vol / m for c, m in pairs) / len(pairs) * 10 ** exp, nd)
     else:
         replicates, recovery, X = [], [], DEF["X"]
@@ -424,6 +425,7 @@ def build_params_single(state):
                       pip_kind=stock_extra["pip_kind"], pip_vol=stock_extra["pip_vol"],
                       pip_nominal=stock_extra["pip_nominal"])
         params["C_cert"] = stock_extra["C_cert"]   # mg/L, 两模式都供母液浓度自动填
+        params["C_cert_unit"] = _cert_unit         # 证书原单位 (报告 4.3 按此显示, µg/mL≡mg/L)
         if stock_extra["cert_mode"] == "relative":
             params["Urel_cert"] = stock_extra["Urel_cert"]
         else:
@@ -996,11 +998,16 @@ def _selfcheck_serial():
 if __name__ == "__main__":
     _selfcheck_serial()
     import json
-    with open(os.path.join(ROOT, "drafts", "111.json"), encoding="utf-8") as fp:
-        st = json.load(fp)
-    out = build_params_single(st)
-    if out["errors"]:
-        print("ERRORS:", out["errors"])
-    res = mup_cg248(out["params"])
-    print(f"U={res['U']}  X={res['X']}  urel_w={res['urel_w']}  recovery_mean={res['recovery']['mean']}")
-    print("params keys:", sorted(out["params"].keys()))
+    _d = os.path.join(ROOT, "drafts")
+    _first = next((f for f in sorted(os.listdir(_d)) if f.endswith(".json")), None) if os.path.isdir(_d) else None
+    if not _first:
+        print("drafts/ 无草稿, 跳过样例装配")
+    else:
+        with open(os.path.join(_d, _first), encoding="utf-8") as fp:
+            st = json.load(fp)
+        out = build_params_single(st)
+        if out["errors"]:
+            print("ERRORS:", out["errors"])
+        res = mup_cg248(out["params"])
+        print(f"U={res['U']}  X={res['X']}  urel_w={res['urel_w']}  recovery_mean={res['recovery']['mean']}")
+        print("params keys:", sorted(out["params"].keys()))

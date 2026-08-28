@@ -453,7 +453,7 @@ def build_params_multi(state):
     default_cm = scalars.get("mu_curve_method", "外标法")
     _V = method.get("vessel_volume")
     _exp = UNIT_EXP.get(method.get("unit", "mg/kg"))
-    _cexp = CIN_UNIT_EXP.get(method.get("conc_unit", "mg/L"), 0)   # ⑥ 加标C → mg/L 指数
+    _cexp = CIN_UNIT_EXP.get(method.get("conc_unit", "mg/L"), 0)   # ⑥加标C/曲线浓度/标液浓度 → mg/L 指数
     _rm = method.get("round_mode", "有效数字")
     _nd = int(method.get("round_nd", 3))
     for a in analytes:
@@ -461,6 +461,8 @@ def build_params_multi(state):
         if m:
             for k in ("X", "p", "x_pred", "points", "replicates", "recovery"):
                 a[k] = m[k]
+            if a.get("points"):                                # 曲线点按样液所选单位录入 → 归一 mg/L (fit 与 x_pred 同空间)
+                a["points"] = [(float(x) * 10 ** _cexp, y) for x, y in a["points"]]   # float(): 兼容旧草稿字符串 x
             if "analyte_areas" in m:              # 内标法原始 分析物/内标 峰面积 (报告表5分行显示)
                 a["analyte_areas"] = m["analyte_areas"]
                 a["is_areas"] = m.get("is_areas", [])
@@ -473,14 +475,14 @@ def build_params_multi(state):
                 c_std, v_add = m.get("spike_std_conc"), m.get("spike_add_vol")
                 a["spike_std_conc"], a["spike_add_vol"] = c_std, v_add
                 if c_std and v_add and _V and _exp is not None:
-                    c0 = c_std * v_add * 1e-3 / _V
+                    c0 = c_std * 10 ** _cexp * v_add * 1e-3 / _V   # 标液浓度同录入单位 → 归一 mg/L 后算 C₀
                     _c_eff = [c * 10 ** _cexp for c in m["spike_C"]]   # 归一 mg/L 后传入 (函数保持逐字移植不动)
                     a["replicates"], a["recovery"] = _derive_spike_rw(
                         _c_eff, m["spike_m"], _V, _exp, c0, _rm, _nd)
                     _ms = method.get("m_sample")
                     if _ms and not _is_na(_ms) and _ms > 0:
                         _rnd_fn = round_sf if _rm == "有效数字" else round_dp
-                        a["spike_add_mass"] = _rnd_fn(c_std * v_add * 1e-3 / _ms * 10 ** _exp, _nd)
+                        a["spike_add_mass"] = _rnd_fn(c_std * v_add * 1e-3 / _ms * 10 ** (_exp + _cexp), _nd)   # c_std 录入值·V/m 天然得 ng/g → mg/kg 基准补 10^cexp
                 else:
                     errors.append(f"{a['name']}: ⑥新格式需 各物标液浓度/加标体积 + ③定容V 才能算 测定值/回收率")
         elif has_source:

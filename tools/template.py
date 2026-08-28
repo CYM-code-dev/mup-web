@@ -190,7 +190,8 @@ def write_template(path, groups=None, curve_meta=None, n_points=3, n_reps=2, n_i
     n_inj_point: 每点标液进样次数; 「曲线」表行数/物 = n_points × n_inj_point (同浓度多行不同峰面积), ≥1。
     n_inj_meas: 每次测定进样次数; 「精密度&回收率」表行数/物 = n_reps × n_inj_meas, ≥1。
     多次进样(>1)时两表末列加「进样序号」(一次/二次…, 点内分组); =1 时无此列。
-    conc_unit: ⑥ 实测加标C 的录入单位 (mg/L/ng/mL), 写进列头括号; 曲线/标液浓度列恒为 mg/L。"""
+    conc_unit: 样液浓度录入单位 (mg/L/µg/mL/ng/mL), 写进 ⑥加标C/曲线浓度/标液浓度 三列列头括号;
+    读侧单位由 ⑥ 列头解析统管三列, 数值原样读出 (归一在引擎装配层)。"""
     if groups is None:
         groups = [{"name": "纯品-1", "kind": "solid", "analytes": []}]
     curve_meta = curve_meta or {}
@@ -205,7 +206,7 @@ def write_template(path, groups=None, curve_meta=None, n_points=3, n_reps=2, n_i
     ws = wb.active
     ws.title = "目标物"
     _header(ws, ["目标物", "分组", "曲线方法"] + (["内标物"] if has_is else [])
-            + ["标液浓度(mg/L)", "加标体积(μL)"])
+            + [f"标液浓度({conc_unit})", "加标体积(μL)"])
     r = 2
     for g in groups:
         for nm in g.get("analytes", []):
@@ -217,7 +218,7 @@ def write_template(path, groups=None, curve_meta=None, n_points=3, n_reps=2, n_i
                 ws.cell(r, 4, cm.get("is_name") or "")
             r += 1
 
-    curve_hdr = ["目标物", "浓度mg/L", "分析物峰面积"] + (["内标峰面积"] if has_is else [])
+    curve_hdr = ["目标物", f"浓度({conc_unit})", "分析物峰面积"] + (["内标峰面积"] if has_is else [])
     # 曲线表预填 N 行/目标物(仅填目标物名); 浓度/峰面积由用户补。N = n_points × n_inj_point (每点重复进样)。
     # ⑥ 加标数据(实测加标C/称样量m)单列「精密度&回收率」表: 每物多组平行样(按 n_reps × n_inj_meas 预填 N 行/物 仅名, C/m 待填); 每物≥2 对
     # 多次进样(>1)→末列加「进样序号」(一次/二次…, 点内分组); 读侧按列序读前几列, 末列标签被忽略 → 向后兼容。
@@ -252,7 +253,7 @@ def read_template(path):
     标准品参数在页面填, 不在本模板。每目标物可独立 外标法/内标法 (目标物表「曲线方法」「内标物」列);
     曲线表新格式 [浓度, 分析物峰面积, 内标峰面积] → 内标法 y=面积比, 外标法 y=分析物峰面积。
     兼容旧模板: 目标物表无「曲线方法」列→默认外标; 曲线表旧 3 列 [浓度, y]→y 直用; 旧版分「重复性」「回收率」两表→分别读。
-    目标物表 [目标物, 分组, 曲线方法, (内标物), 标液浓度(mg/L), 加标体积(μL)] (X/曲线p/x_pred 不再手填; 合并段由⑥实测加标C 派生 p=个数、x_pred=均值, X 走测定值w均值兜底)。「内标物」列仅当存在内标法目标物时才有; 全外标模板无此列→is_name=""。
+    目标物表 [目标物, 分组, 曲线方法, (内标物), 标液浓度(<单位>), 加标体积(μL)] (X/曲线p/x_pred 不再手填; 合并段由⑥实测加标C 派生 p=个数、x_pred=均值, X 走测定值w均值兜底)。「内标物」列仅当存在内标法目标物时才有; 全外标模板无此列→is_name=""。
     兼容旧模板: 上版 目标物表含 X_mgkg/曲线p/x_pred_mgL 三列 → 照读(无⑥加标C时回退用)。
     ⑥ 加标数据(实测加标C/称样量m) 单列「精密度&回收率」表 [目标物, 实测加标C(mg/L), 称样量m(g)], 每物多组平行样(多行)。
     合并段按 各物标液浓度·加标体积 + 方法V 派生 R=C/C₀, w=C·V/m。兼容: 上版 目标物表末两列并C/m / 更旧 精密度&回收率 测定值格式 / 最旧 分两表。
@@ -273,6 +274,7 @@ def read_template(path):
         nm = str(d.get("目标物", "")).strip()
         if nm:
             raw.setdefault(nm, []).append(d)
+    _sc_hdr = next((h for h in headers if h.startswith("标液浓度")), "标液浓度(mg/L)")   # 列头带单位, 按前缀定位
     out = {}
     for nm, rows in raw.items():
         cm = "外标法"
@@ -299,7 +301,7 @@ def read_template(path):
                    "x_pred": _first_num(rows, "x_pred_mgL", float),
                    "curve_method": cm, "is_name": isn,
                    "points": [], "replicates": [], "recovery": [],
-                   "spike_std_conc": _first_num(rows, "标液浓度(mg/L)", float),
+                   "spike_std_conc": _first_num(rows, _sc_hdr, float),
                    "spike_add_vol": _first_num(rows, "加标体积(μL)", float),
                    "spike_C": spike_C, "spike_m": spike_m}
     methods = {nm: a["curve_method"] for nm, a in out.items()}
@@ -432,7 +434,7 @@ if __name__ == "__main__":
     assert pr_names == ["A_外标", "A_外标", "B_内标", "B_内标"], pr_names
     # 曲线表头为 4 列
     assert [str(c.value).strip() for c in wb["曲线拟合"][1]] == \
-        ["目标物", "浓度mg/L", "分析物峰面积", "内标峰面积"]
+        ["目标物", "浓度(mg/L)", "分析物峰面积", "内标峰面积"]
     # 曲线表按 n_points 预填 (仅目标物名, 浓度/峰面积留空): A_外标×3 + B_内标×3
     cv_names = [r[0] for r in wb["曲线拟合"].iter_rows(min_row=2, values_only=True)]
     assert cv_names == ["A_外标"] * 3 + ["B_内标"] * 3, cv_names
@@ -486,14 +488,13 @@ if __name__ == "__main__":
     _pr_i = list(_wb_i["精密度&回收率"].iter_rows(min_row=2, values_only=True))
     assert [r[0] for r in _pr_i] == ["A_外标"] * 4 + ["B_内标"] * 4
     assert [str(c.value).strip() for c in _wb_i["精密度&回收率"][1]] == \
-        ["目标物", "实测加标C(mg/L)", "称样量m(g)", "进样序号"]
-    # 点内分组: 每对 一次/二次 → A 四行 = 一次,二次,一次,二次
+        ["目标物", "实测加标C(mg/L)", "称样量m(g)", "进样序号"]    # 点内分组: 每对 一次/二次 → A 四行 = 一次,二次,一次,二次
     assert [r[3] for r in _pr_i] == ["一次进样", "二次进样"] * 4, [r[3] for r in _pr_i]
     _cv_i = list(_wb_i["曲线拟合"].iter_rows(min_row=2, values_only=True))
     assert [r[0] for r in _cv_i] == ["A_外标"] * 6 + ["B_内标"] * 6
     # 曲线 4 列(含内标峰面积) + 进样序号 → 5 列; 每点 一次/二次 → A 六行 = (一次,二次)×3
     assert [str(c.value).strip() for c in _wb_i["曲线拟合"][1]] == \
-        ["目标物", "浓度mg/L", "分析物峰面积", "内标峰面积", "进样序号"]
+        ["目标物", "浓度(mg/L)", "分析物峰面积", "内标峰面积", "进样序号"]
     assert [r[4] for r in _cv_i] == ["一次进样", "二次进样"] * 6, [r[4] for r in _cv_i]
     # 读侧按列序读前几列, 末列「进样序号」被忽略 → 填重复浓度也不丢点 (6 点全读出)
     _cv = _wb_i["曲线拟合"]
@@ -527,16 +528,21 @@ if __name__ == "__main__":
     assert [str(c.value).strip() for c in wb2["目标物"][1]] == \
         ["目标物", "分组", "曲线方法", "标液浓度(mg/L)", "加标体积(μL)"], [str(c.value) for c in wb2["目标物"][1]]
     assert [str(c.value).strip() for c in wb2["曲线拟合"][1]] == \
-        ["目标物", "浓度mg/L", "分析物峰面积"], [str(c.value) for c in wb2["曲线拟合"][1]]
+        ["目标物", "浓度(mg/L)", "分析物峰面积"], [str(c.value) for c in wb2["曲线拟合"][1]]
     os.remove(out2)
 
     # ⑥ 样液浓度单位 ng/mL: 列头带单位 (读侧前缀定位 + 返回 conc_unit); 旧 (mg/L) 表头兼容 = 上面默认路径
-    assert _cin_unit("实测加标C(µg/mL)") == "mg/L", "未知单位应回退 mg/L"
+    assert _cin_unit("实测加标C(µg/L)") == "mg/L", "未知单位应回退 mg/L"
+    assert _cin_unit("实测加标C(µg/mL)") == "µg/mL"
     out_u = out + ".unit.xlsx"
     write_template(out_u, groups, curve_meta, n_points=3, conc_unit="ng/mL")
     _wb_u = openpyxl.load_workbook(out_u)
     assert [str(c.value).strip() for c in _wb_u["精密度&回收率"][1]] == \
         ["目标物", "实测加标C(ng/mL)", "称样量m(g)"]
+    assert [str(c.value).strip() for c in _wb_u["目标物"][1]] == \
+        ["目标物", "分组", "曲线方法", "内标物", "标液浓度(ng/mL)", "加标体积(μL)"]
+    assert [str(c.value).strip() for c in _wb_u["曲线拟合"][1]] == \
+        ["目标物", "浓度(ng/mL)", "分析物峰面积", "内标峰面积"]
     _pr_u = _wb_u["精密度&回收率"]                                     # 每物 2 对 C/m (ng/mL)
     for i, (c, m) in enumerate([(12340.0, 0.5004), (12100.0, 0.4998)], start=2):
         _pr_u.cell(i, 1, "A_外标"); _pr_u.cell(i, 2, c); _pr_u.cell(i, 3, m)

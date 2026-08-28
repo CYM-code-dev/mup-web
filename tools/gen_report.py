@@ -17,7 +17,13 @@ from decimal import Decimal, ROUND_CEILING
 
 sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
 from uncertainty import (mup_cg248, recovery, GLASS_TOLERANCE, _GRADUATED, round_sf,  # noqa: E402
-                         fmt_result, vessel_tol, CIN_UNIT_EXP)
+                         fmt_result, vessel_tol, CIN_UNIT_EXP, CONC_UNIT_EXP)
+
+
+def _cu_k(method):
+    """method → (样液浓度单位, 显示换算 k=10^-cexp)。ng/mL → k=1000; mg/L/µg/mL → 1。"""
+    cu = method.get("conc_unit") or "mg/L"
+    return cu, 10 ** (-CIN_UNIT_EXP.get(cu, 0))
 
 
 def _f(x, nd=4):
@@ -108,6 +114,7 @@ def _work_flow_rows(method):
     wc = method.get("work_chain") or []
     if not wc:
         return []
+    _cu = method.get("conc_unit") or "mg/L"      # 母液/目标浓度为录入单位 (前端链表原样直通)
     seen = {}
     for row in wc:
         for key in ("母液", "目标"):
@@ -127,7 +134,7 @@ def _work_flow_rows(method):
         c = (c or "").strip()
         return f"C{num[c]}({c})" if c in num else c
 
-    out = ["| 母液浓度（mg/L） | 移取体积（mL） | 移取量器 | 定容量器 | 目标浓度（mg/L） |",
+    out = [f"| 母液浓度（{_cu}） | 移取体积（mL） | 移取量器 | 定容量器 | 目标浓度（{_cu}） |",
            "|---|---|---|---|---|"]
     for row in wc:
         v = row.get("体积")
@@ -140,9 +147,10 @@ def _work_flow_rows(method):
     return out
 
 
-def _work_flow_rows_multi(grp, unit, analytes=None):
+def _work_flow_rows_multi(grp, unit, analytes=None, cu="mg/L"):
     """多目标物 4.3.2 稀释流程表: 中间液(混合定容, inter.feeds) + 工作液(串行, work) 完整链。
     grp: 标准品分组 (inter={feeds,flasks}, work={dg:[step]}); unit: 源单元(液体=ding_group/固体=目标物名)。
+    cu: 样液浓度单位 — 链上母液/目标浓度为录入单位直通; direct 分支证书反推母液(mg/L 语义)×k 换算。
     母液/目标浓度 <0.10 留3位 / ≥0.10 留2位; 量器串去等级允差后缀 (A)(±…)。
     中间液浓度=工作液首步母液(工作液自中间液起稀释), 储备液(其母液)由此反推。无中间液移取/空 → []。
     inter.direct(直接稀释): work 链各行即工作液点位 — 每点位×各目标物一行, 母液=证书浓度×储备液稀释比
@@ -152,6 +160,7 @@ def _work_flow_rows_multi(grp, unit, analytes=None):
     flasks = inter.get("flasks") or {}
     work = grp.get("work") or {}
     direct = bool(inter.get("direct"))
+    _kk = 10 ** (-CIN_UNIT_EXP.get(cu, 0))       # mg/L(证书/公式空间) → 录入单位显示换算
 
     def _strip(s):
         s = str(s or "").split("(")[0].strip()       # ponytail: 去量器等级/允差后缀 (A)(±…)
@@ -198,6 +207,8 @@ def _work_flow_rows_multi(grp, unit, analytes=None):
                     mother = _dilute(cc, sfl.get("pip_vol"), sfl.get("flask_vol"))
                     if mother is None:
                         mother = cc if cc is not None else s.get("母液浓度(mg/L)")
+                    elif cc is not None:
+                        mother = mother * _kk           # 证书反推母液为 mg/L 语义 → 换算录入单位
                     tgt = _dilute(mother, pv, fv)
                     nm = a.get("name", "")
                     mcell = f"{nm}（{_conc(mother)}）" if (nm and mother is not None) else (_conc(mother) or nm)
@@ -206,7 +217,7 @@ def _work_flow_rows_multi(grp, unit, analytes=None):
                                 f"{_strip(fv_str) if gi == 0 else ''} | {_conc(tgt)} |")
         if not rows:
             return []
-        return ["| 母液浓度（mg/L） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（mg/L） |",
+        return [f"| 母液浓度（{cu}） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（{cu}） |",
                 "|---|---|---|---|---|"] + rows
     # feeds[src] 规范化为数组 (前端 multi.js:729); 兼容旧草稿单对象。
     # 多中间液: 每个 feed 各自的 dg → 各自工作液链 (旧版单 feed 单链 同构)。
@@ -233,19 +244,20 @@ def _work_flow_rows_multi(grp, unit, analytes=None):
                         f"{_strip(s.get('pip_vessel'))} | {_strip(s.get('flask_vessel'))} | {_conc(tgt)} |")
     if not rows:
         return []
-    return ["| 母液浓度（mg/L） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（mg/L） |",
+    return [f"| 母液浓度（{cu}） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（{cu}） |",
             "|---|---|---|---|---|"] + rows
 
 
-def _solid_inter_work_rows(grp, group_analytes):
+def _solid_inter_work_rows(grp, group_analytes, cu="mg/L"):
     """固体多目标物 4.3.2 稀释流程表 (逐物质多行, 镜像前端「固体组中间液」表):
     中间液每个目标物一行 — 母液浓度=m_std(g)·纯度·1e6/储备液容量瓶(mL), 移取体积/移取量器按各目标物;
     定容量器、目标浓度合并(首行填值, 余行留空) — 目标浓度=各目标物 母液浓度×移取体积/容量瓶 各自修约后取均值。
-    后接该中间液分组的工作液串行稀释链。无有效中间液移取 → []."""
+    cu: 样液浓度单位 — 储备液公式产出 mg/L, ×k 换算; 链上浓度录入单位直通。无有效中间液移取 → []."""
     inter = grp.get("inter") or {}
     feeds = inter.get("feeds") or {}
     flasks = inter.get("flasks") or {}
     work = grp.get("work") or {}
+    _kk = 10 ** (-CIN_UNIT_EXP.get(cu, 0))       # mg/L(公式空间) → 录入单位显示换算
 
     def _strip(s):
         s = str(s or "").split("(")[0].strip()
@@ -276,7 +288,7 @@ def _solid_inter_work_rows(grp, group_analytes):
         fd_list = fd_raw if isinstance(fd_raw, list) else ([fd_raw] if fd_raw else [])
         m, p, sf = a.get("m_std_g"), a.get("purity"), a.get("stock_flask")
         sf_nom = _nominal(sf)
-        stock = (float(m) * float(p) * 1e6 / sf_nom) if (m and p and sf_nom) else None
+        stock = (float(m) * float(p) * 1e6 / sf_nom * _kk) if (m and p and sf_nom) else None
         for fd in fd_list:
             if not (fd and fd.get("pip_vol")):
                 continue
@@ -314,7 +326,7 @@ def _solid_inter_work_rows(grp, group_analytes):
                         f"{_strip(s.get('pip_vessel'))} | {_strip(s.get('flask_vessel'))} | {_conc_fmt(tgt)} |")
     if not rows:
         return []
-    return ["| 母液浓度（mg/L） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（mg/L） |",
+    return [f"| 母液浓度（{cu}） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（{cu}） |",
             "|---|---|---|---|---|"] + rows
 
 
@@ -545,14 +557,17 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=N
     A(f"**{sec}.1 标准品证书浓度产生的不确定度 $u_{{rel}}(c_{{s,c}})$**")
     _rep_paren = f"（{cert_rep_names}）" if (cert_variants and cert_rep_names) else ""
     if cert_mode == "absolute":
+        # 证书浓度显示跟随①所选证书单位 (单组分 params 带 C_cert_unit; multi 裸数字无单位键 → _fk=1 维持 mg/L)
+        _cu_cert = method.get("C_cert_unit") or "mg/L"
+        _fk = 10 ** (-CONC_UNIT_EXP.get(_cu_cert, 0))
         if cert_variants:
             A(f"标准品证书给出标称浓度 $c_{{cert}}$={g(C_cert)}mg/L，扩展不确定度 $U$（各目标物不尽相同，"
               f"包含因子 k={kc}）。以 $U$={g(U_abs)}mg/L 的目标物{_rep_paren}为例，换算为相对标准不确定度：")
         else:
-            A(f"标准品证书给出标称浓度 $c_{{cert}}$={g(C_cert)}mg/L，扩展不确定度 $U$={g(U_abs)}mg/L"
+            A(f"标准品证书给出标称浓度 $c_{{cert}}$={g(C_cert * _fk)}{_cu_cert}，扩展不确定度 $U$={g(U_abs * _fk)}{_cu_cert}"
               f"（包含因子 k={kc}），换算为相对标准不确定度：")
-        A("$$ u_{rel}(c_{s,c}) = \\frac{U}{k \\cdot c_{cert}} = \\frac{" + g(U_abs)
-          + "}{" + str(kc) + " \\times " + g(C_cert) + "} = " + _f(u_cert) + " $$")
+        A("$$ u_{rel}(c_{s,c}) = \\frac{U}{k \\cdot c_{cert}} = \\frac{" + g(U_abs * _fk)
+          + "}{" + str(kc) + " \\times " + g(C_cert * _fk) + "} = " + _f(u_cert) + " $$")
     else:
         if cert_variants:
             A(f"标准品证书给出相对扩展不确定度 $U_{{rel}}$（各目标物不尽相同，包含因子 k={kc}）。"
@@ -915,8 +930,8 @@ def render(method, r):
     rec = r["recovery"]
     fit = r["fit"]
     unit = method.get("unit", "mg/kg")
-    _cu = method.get("conc_unit", "mg/L")                     # 样液浓度录入单位 (叙述/式中跟随)
-    _cu_note = "" if _cu == "mg/L" else "（标准曲线横坐标及 u(Q) 均以 mg/L 计）"
+    _cu = method.get("conc_unit", "mg/L")                     # 样液浓度录入单位 (曲线/标液/叙述全链跟随)
+    _ck = 10 ** (-CIN_UNIT_EXP.get(_cu, 0))                   # mg/L(引擎内部)→录入单位显示换算 (ng/mL→×1000); 勿名 _k: 4.3 有同名循环变量
 
     # 占比按 *方差贡献* (正确 GUM 口径). 注: 范本表7用的是线性占比(非标准).
     g = lambda x: f"{x:g}"
@@ -1001,11 +1016,11 @@ def render(method, r):
     force_clause = "，并强制过原点(0,0)（无截距）" if force_origin else ""
     is_is = method.get("curve_method") == "内标法"
     method_word = "内标法" if is_is else "外标法"
-    x_word = "目标物与内标物浓度之比（浓度比）" if is_is else "目标物浓度（mg/L）"
+    x_word = "目标物与内标物浓度之比（浓度比）" if is_is else f"目标物浓度（{_cu}）"
     y_word = "分析物与内标峰面积之比（响应比）" if is_is else "峰面积"
-    # 内标法: 叙述按浓度比模型, 但各点 c_IS 恒定→浓度比∝目标物浓度, 仍以 mg/L 代入, u_rel(Q) 等价
+    # 内标法: 叙述按浓度比模型, 但各点 c_IS 恒定→浓度比∝目标物浓度, 仍以样液单位代入, u_rel(Q) 等价
     is_clause = ("因各浓度点内标物浓度 c_IS 恒定，浓度比与目标物浓度成正比，"
-                 "故以目标物浓度（mg/L）参与计算，u_rel(Q) 结果等价。") if is_is else ""
+                 f"故以目标物浓度（{_cu}）参与计算，u_rel(Q) 结果等价。") if is_is else ""
     p_meas = method.get("p", 1)
     A("**4.4 曲线拟合导致的相对不确定度 $u_{rel}(Q)$**")
     # 表: 目标物理论浓度与峰面积 (内标法: 目标物峰面积 + 内标峰面积 两行; 外标法: 峰面积 一行)
@@ -1015,7 +1030,7 @@ def render(method, r):
         A(f"表{nt} 目标物理论浓度与峰面积\n")
         A("| 项目 | 浓度 | " + " | ".join(f"X{i+1}" for i in range(n_pt)) + " |")
         A("|---|" + "---|" * (n_pt + 1))
-        A(f"| {analyte} | X (mg/L) | " + " | ".join(_conc_fmt(x) for x, _ in pts) + " |")
+        A(f"| {analyte} | X ({_cu}) | " + " | ".join(_conc_fmt(x * _ck) for x, _ in pts) + " |")
         if is_is:
             a_areas = method.get("analyte_areas") or [yy for _, yy in pts]
             i_areas = method.get("is_areas") or []
@@ -1028,18 +1043,18 @@ def render(method, r):
     A(f"本方法采用{method_word}定量，最小二乘法拟合出的标准曲线线性方程为 {eq_str}，"
       f"其中 x 为{x_word}，y 为{y_word}。{is_clause}拟合时选用 {n_pt} 个浓度点{origin_clause}{force_clause}"
       f"（n = {n_fit}），样品溶液平行测定 {p_meas} 次（p = {p_meas}），由标准曲线线性回归方程求得的样液平均质量浓度 "
-      f"C₀ = {g(method['x_pred'] * 10 ** -CIN_UNIT_EXP.get(_cu, 0))} {_cu}。{_cu_note}")
+      f"C₀ = {g(method['x_pred'] * _ck)} {_cu}。")
     # 式中各分量独占一行并对齐 (仿「2 测量模型」式中): 首行"式中："+变量, 续行3个全角空格
     # 缩进使变量字母与首行对齐 (每行各为独立段→同享 Normal 首行缩进2字符; 3全角空格 == "式中：" 3字宽)。
     # 行尾两空格=Markdown硬换行 (st.markdown预览换行; docx按行分段, 尾空格被 strip)。
     if force_origin:
         A("标准曲线各浓度点浓度的平方和 Sxx 与回归残差标准差 s 分别为：")
-        A("$$ S_{xx} = \\sum_{i=1}^{n} x_i^{2} = " + g(fit["Sxx"]) + " $$")
+        A("$$ S_{xx} = \\sum_{i=1}^{n} x_i^{2} = " + g(fit["Sxx"] * _ck ** 2) + " $$")
         A("$$ s = \\sqrt{\\frac{\\sum_{i=1}^{n}(y_i-ax_i)^{2}}{n-1}} = "
           + format(fit["s"], ".4g") + " $$")
         A("则由最小二乘法拟合标准工作曲线所引入的标准不确定度为：")
         A("$$ u(Q) = \\frac{s}{a}\\sqrt{\\frac{1}{p}+\\frac{C_0^{2}}{S_{xx}}} = "
-          + _f(fit["u"]) + " $$")
+          + _f(fit["u"] * _ck) + " $$")
         A("")
         A("$$ u_{rel}(Q) = \\frac{u(Q)}{C_0} = " + _f(r["u_q"]) + " $$")
         A("  \n".join([
@@ -1052,12 +1067,12 @@ def render(method, r):
         ]))
     else:
         A("标准曲线各浓度点浓度的离差平方和 Sxx 与回归残差标准差 s 分别为：")
-        A("$$ S_{xx} = \\sum_{i=1}^{n}(x_i-\\bar{x})^{2} = " + g(fit["Sxx"]) + " $$")
+        A("$$ S_{xx} = \\sum_{i=1}^{n}(x_i-\\bar{x})^{2} = " + g(fit["Sxx"] * _ck ** 2) + " $$")
         A("$$ s = \\sqrt{\\frac{\\sum_{i=1}^{n}(y_i-(b+ax_i))^{2}}{n-2}} = "
           + format(fit["s"], ".4g") + " $$")
         A("则由最小二乘法拟合标准工作曲线所引入的标准不确定度为：")
         A("$$ u(Q) = \\frac{s}{a}\\sqrt{\\frac{1}{p}+\\frac{1}{n}+\\frac{(C_0-\\bar{x})^{2}}{S_{xx}}} = "
-          + _f(fit["u"]) + " $$")
+          + _f(fit["u"] * _ck) + " $$")
         A("")
         A("$$ u_{rel}(Q) = \\frac{u(Q)}{C_0} = " + _f(r["u_q"]) + " $$")
         A("  \n".join([
@@ -1074,13 +1089,13 @@ def render(method, r):
     nt = _tab()
     A("")
     A(f"表{nt} 拟合曲线求引入的相对不确定度\n")
-    A("| 目标物 | C₀ (mg/L) | x̄ | a (斜率) | b (截距) | u(Q) | u_rel(Q) |")
+    A(f"| 目标物 | C₀ ({_cu}) | x̄ | a (斜率) | b (截距) | u(Q) | u_rel(Q) |")
     A("|---|" + "---|" * 6)
-    _xbar_cell = "—" if force_origin else f"{fit['xbar']:.4g}"
+    _xbar_cell = "—" if force_origin else f"{fit['xbar'] * _ck:.4g}"
     _b_cell = "0" if force_origin else g(fit["b0"])
-    A("| " + analyte + " | " + g(method["x_pred"]) + " | " + _xbar_cell
-      + " | " + g(fit["b1"]) + " | " + _b_cell + " | "
-      + _f(fit["u"]) + " | " + _f(r["u_q"]) + " |")
+    A("| " + analyte + " | " + g(method["x_pred"] * _ck) + " | " + _xbar_cell
+      + " | " + g(fit["b1"] / _ck) + " | " + _b_cell + " | "
+      + _f(fit["u"] * _ck) + " | " + _f(r["u_q"]) + " |")
     # 4.5 重复性 (对齐 Word 范本: 影响量叙述(随前处理流程自动识别) + 重复性表(逐次测定值) + s/u/u_rel 文本式)
     rep = r["rep"]
     rep_vals = method.get("replicates_data") or []      # 逐次测定值 X 列表 (mg/kg); 无则只出汇总式
@@ -1115,7 +1130,7 @@ def render(method, r):
         _vol = f"{g(v_add)}μL"
     else:
         _vol = ""
-    spike_clause = (f"均添加{g(c_std)}mg/L的标准溶液{_vol}，使加入的目标物含量为{fmt_result(w_add, _wrm, _wnd)}{unit}，"
+    spike_clause = (f"均添加{g(c_std)}{_cu}的标准溶液{_vol}，使加入的目标物含量为{fmt_result(w_add, _wrm, _wnd)}{unit}，"
                     if all(v for v in (c_std, v_add, w_add)) else "")
     nt_rec = _tab() if rec_vals else None
     _rec_tail = f"结果见表{nt_rec}。" if nt_rec else "结果见下式。"
@@ -1243,6 +1258,7 @@ def render_multi(method, groups, analytes, results):
     matrix = method.get("matrix", "（基质）")
     r0 = results[0]
     unit = method.get("unit", "mg/kg")
+    _cu, _ck = _cu_k(method)          # 样液浓度录入单位 + 显示换算 (曲线/标液/叙述全链跟随); 勿名 _k: 4.3 有同名循环变量
     g = lambda x: f"{x:g}"
     _LABEL = method.get("analyte") or "多种目标物"
     lines = []
@@ -1336,8 +1352,9 @@ def render_multi(method, groups, analytes, results):
         A(f"**4.3.{_nw} 「{grp['name']}」中间液及工作液稀释引入的相对不确定度 $u_{{rel}}(C_{{work}})$**")
         # 稀释流程表 (描述性): 中间液(混合定容)+工作液(串行) 完整链, 置量器明细表前
         # 稀释流程表 (描述性): 固体逐物质多行(母液浓度按纯度/m_std算, 目标浓度取均值); 液体按分组单链
-        _flow = _solid_inter_work_rows(grp, [analytes[i] for i in idxs]) if kind == "solid" \
-            else _work_flow_rows_multi(grp, analytes[idxs[0]].get("group"), [analytes[i] for i in idxs])
+        _cu_m = method.get("conc_unit") or "mg/L"
+        _flow = _solid_inter_work_rows(grp, [analytes[i] for i in idxs], cu=_cu_m) if kind == "solid" \
+            else _work_flow_rows_multi(grp, analytes[idxs[0]].get("group"), [analytes[i] for i in idxs], cu=_cu_m)
         if _flow:
             A("工作液各点位由买来的高浓标准品（储备液）直接稀释制得（非逐级），各点位母液浓度、移取体积与量器、"
               "定容量器及目标浓度见下表：" if (grp.get("inter") or {}).get("direct") else
@@ -1496,11 +1513,11 @@ def render_multi(method, groups, analytes, results):
                    else ("内标法" if cm_set == {"内标法"} else "外标法"))
     y_word = ("峰面积（内标法目标物为分析物与内标峰面积之比，即响应比）" if has_is else "峰面积")
     x_word = ("目标物与内标物浓度之比（浓度比）" if cm_set == {"内标法"}
-              else ("目标物浓度（mg/L）（内标法为目标物与内标物浓度之比，即浓度比）" if has_is
-                    else "目标物浓度（mg/L）"))
-    # 内标法: 叙述按浓度比模型, 但各点 c_IS 恒定→浓度比∝目标物浓度, 仍以 mg/L 代入, u_rel(Q) 等价
+              else (f"目标物浓度（{_cu}）（内标法为目标物与内标物浓度之比，即浓度比）" if has_is
+                    else f"目标物浓度（{_cu}）"))
+    # 内标法: 叙述按浓度比模型, 但各点 c_IS 恒定→浓度比∝目标物浓度, 仍以样液单位代入, u_rel(Q) 等价
     is_clause = ("因各浓度点内标物浓度 c_IS 恒定，浓度比与目标物浓度成正比，"
-                 "故以目标物浓度（mg/L）参与计算，u_rel(Q) 结果等价。") if has_is else ""
+                 f"故以目标物浓度（{_cu}）参与计算，u_rel(Q) 结果等价。") if has_is else ""
     force_origin = method.get("force_origin", False)
     eq_str = "y = ax" if force_origin else "y = ax + b"
     # n/p 叙述值 (方法学写一次; 各物通常同设计→取首物; 含原点(非强制)→拟合点数 n_pt+1)
@@ -1520,7 +1537,7 @@ def render_multi(method, groups, analytes, results):
         A("| 项目 | 浓度 | " + " | ".join(f"X{i+1}" for i in range(_max_pt)) + " |")
         A("|---|" + "---|" * (_max_pt + 1))
         # 浓度: <0.001 不修约, <0.10→3位小数, ≥0.10→2位小数; 峰面积/响应比: 不修约 (整数去.0, 小数原样)
-        _xfmt = lambda v: _conc_fmt(v)
+        _xfmt = lambda v: _conc_fmt(v * _ck)
         _yfmt = lambda v: str(int(v)) if float(v).is_integer() else str(v)
         # 预分组内标峰面积(相同值并为一组); 多内标时给内标目标物按表序编 T1,T2… 代号, AIS 行用代号标注
         # 预分组: 浓度X相同的目标物并为一组(共用一行X); 内标峰面积相同并为一组; 多内标→编T1,T2…
@@ -1551,7 +1568,7 @@ def render_multi(method, groups, analytes, results):
             else:
                 _xlab = ("（" + ",".join(_tcode[t] for t in _tis) + "）") if _tcode \
                     else "、".join(_rows44[t][0].get("name", "") for t in _tis)
-            A(f"| {_xlab} | X (mg/L) | " + " | ".join(_xfmt(x) for x in _xk) + " |")
+            A(f"| {_xlab} | X ({_cu}) | " + " | ".join(_xfmt(x) for x in _xk) + " |")
             for _ti in _tis:
                 a, r, pts = _rows44[_ti]
                 is_is = a.get("curve_method") == "内标法"
@@ -1593,8 +1610,7 @@ def render_multi(method, groups, analytes, results):
     else:
         A("$$ u(Q) = \\frac{s}{a}\\sqrt{\\frac{1}{p}+\\frac{1}{n}+\\frac{(C_0-\\bar{x})^{2}}{S_{xx}}} $$")
     A("$$ u_{rel}(Q) = \\frac{u(Q)}{C_0} $$")
-    _cu = method.get("conc_unit", "mg/L")                     # 样液浓度录入单位 (式中跟随; 4.4 表恒 mg/L)
-    # 式中 (写一次, 对齐单目标物范本「式中」段)
+    # 式中 (写一次, 对齐单目标物范本「式中」段; _cu/_k 已在 render_multi 开头取)
     if force_origin:
         A("  \n".join([
             "式中：a——标准曲线斜率；",
@@ -1621,15 +1637,15 @@ def render_multi(method, groups, analytes, results):
     if any(rr.get("fit") is not None for rr in results):
         nt = _tab()
         A(f"表{nt} 各目标物曲线拟合相对不确定度\n")
-        A("| 目标物 | C₀ (mg/L) | a (斜率) | b (截距) | u(Q) | $u_{rel}(Q)$ |")
+        A(f"| 目标物 | C₀ ({_cu}) | a (斜率) | b (截距) | u(Q) | $u_{{rel}}(Q)$ |")
         A("|---|---|---|---|---|---|")
         for a, r in zip(analytes, results):
             fit = r.get("fit")
             if fit is not None:
                 _b = "0" if force_origin else f"{fit['b0']:.3e}"
-                _c0 = f"{a.get('x_pred'):.2f}" if a.get("x_pred") is not None else "—"
+                _c0 = f"{a.get('x_pred') * _ck:.2f}" if a.get("x_pred") is not None else "—"
                 A(f"| {a.get('name', '')} | {_c0} | "
-                  f"{fit['b1']:.3e} | {_b} | {_f(fit['u'])} | {_f(r.get('u_q'))} |")
+                  f"{fit['b1'] / _ck:.3e} | {_b} | {_f(fit['u'] * _ck)} | {_f(r.get('u_q'))} |")
             else:
                 A(f"| {a.get('name', '')} | — | — | — | — | — |")
         A("")
@@ -1687,12 +1703,12 @@ def render_multi(method, groups, analytes, results):
     _same_conc = bool(_spiked) and len({a.get("spike_std_conc") for a in _spiked}) == 1
     _same_vol = bool(_spiked) and len({a.get("spike_add_vol") for a in _spiked}) == 1
     if _spiked and _same_conc and _same_vol:
-        _spike_clause = f"均添加{g(_spiked[0].get('spike_std_conc'))}mg/L的标准溶液{_vol_str(_spiked[0])}，"
+        _spike_clause = f"均添加{g(_spiked[0].get('spike_std_conc'))}{_cu}的标准溶液{_vol_str(_spiked[0])}，"
     elif _spiked and _same_vol:
-        _conc_list = "、".join(f"{a.get('name', '')} {g(a.get('spike_std_conc'))}mg/L" for a in _spiked)
+        _conc_list = "、".join(f"{a.get('name', '')} {g(a.get('spike_std_conc'))}{_cu}" for a in _spiked)
         _spike_clause = f"均添加{_vol_str(_spiked[0])}混合标准溶液（各目标物加入浓度分别为：{_conc_list}），"
     elif _spiked:
-        _pairs = "、".join(f"{a.get('name', '')} {g(a.get('spike_std_conc'))}mg/L标准溶液{_vol_str(a)}" for a in _spiked)
+        _pairs = "、".join(f"{a.get('name', '')} {g(a.get('spike_std_conc'))}{_cu}标准溶液{_vol_str(a)}" for a in _spiked)
         _spike_clause = f"各目标物分别添加{_pairs}，"
     else:
         _spike_clause = ""
