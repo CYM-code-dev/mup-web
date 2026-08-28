@@ -134,7 +134,9 @@ def _work_flow_rows(method):
         c = (c or "").strip()
         return f"C{num[c]}({c})" if c in num else c
 
-    out = [f"| 母液浓度（{_cu}） | 移取体积（mL） | 移取量器 | 定容量器 | 目标浓度（{_cu}） |",
+    out = [f"| 母液浓度（储备液 mg/L；中间液及以下 {_cu}） | 移取体积（mL） | 移取量器 | 定容量器 | 目标浓度（{_cu}） |"
+           if _cu != "mg/L" else
+           "| 母液浓度（mg/L） | 移取体积（mL） | 移取量器 | 定容量器 | 目标浓度（mg/L） |",
            "|---|---|---|---|---|"]
     for row in wc:
         v = row.get("体积")
@@ -161,6 +163,12 @@ def _work_flow_rows_multi(grp, unit, analytes=None, cu="mg/L"):
     work = grp.get("work") or {}
     direct = bool(inter.get("direct"))
     _kk = 10 ** (-CIN_UNIT_EXP.get(cu, 0))       # mg/L(证书/公式空间) → 录入单位显示换算
+    # 表头: 储备液恒 mg/L, 断点在储备液→中间液 (mg/L 时与原表头逐字一致)
+    _hdr_m = (f"| 母液浓度（储备液 mg/L；中间液及以下 {cu}） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（{cu}） |"
+              if cu != "mg/L" else
+              "| 母液浓度（mg/L） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（mg/L） |")
+    _hdr_d = (f"| 母液浓度（mg/L） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（{cu}） |"
+              if cu != "mg/L" else _hdr_m)   # direct: 母液=储备液/证书级(恒 mg/L), 目标=工作液点位(所选单位)
 
     def _strip(s):
         s = str(s or "").split("(")[0].strip()       # ponytail: 去量器等级/允差后缀 (A)(±…)
@@ -207,9 +215,9 @@ def _work_flow_rows_multi(grp, unit, analytes=None, cu="mg/L"):
                     mother = _dilute(cc, sfl.get("pip_vol"), sfl.get("flask_vol"))
                     if mother is None:
                         mother = cc if cc is not None else s.get("母液浓度(mg/L)")
-                    elif cc is not None:
-                        mother = mother * _kk           # 证书反推母液为 mg/L 语义 → 换算录入单位
                     tgt = _dilute(mother, pv, fv)
+                    if tgt is not None:
+                        tgt = tgt * _kk                # direct: 母液为证书级 mg/L, 目标(工作液点位)换算录入单位
                     nm = a.get("name", "")
                     mcell = f"{nm}（{_conc(mother)}）" if (nm and mother is not None) else (_conc(mother) or nm)
                     rows.append(f"| {mcell} | {_vol(pv) if gi == 0 else ''} | "
@@ -217,7 +225,7 @@ def _work_flow_rows_multi(grp, unit, analytes=None, cu="mg/L"):
                                 f"{_strip(fv_str) if gi == 0 else ''} | {_conc(tgt)} |")
         if not rows:
             return []
-        return [f"| 母液浓度（{cu}） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（{cu}） |",
+        return [_hdr_d,
                 "|---|---|---|---|---|"] + rows
     # feeds[src] 规范化为数组 (前端 multi.js:729); 兼容旧草稿单对象。
     # 多中间液: 每个 feed 各自的 dg → 各自工作液链 (旧版单 feed 单链 同构)。
@@ -234,6 +242,8 @@ def _work_flow_rows_multi(grp, unit, analytes=None, cu="mg/L"):
         # 中间液 (混合定容): 储备液(母液)反推 → 移取 → 定容 → 中间液(=本链工作液首步母液)
         inter_c = wchain[0].get("母液浓度(mg/L)") if wchain else None
         stock_c = _dilute(inter_c, fv, pv) if (inter_c is not None and fv) else None
+        if stock_c is not None:
+            stock_c = stock_c / _kk                     # 反推值在录入单位空间 → 储备液 mg/L 显示
         rows.append(f"| {_conc(stock_c)} | {_vol(pv)} | {_strip(fd.get('pip_vessel'))} | "
                     f"{_strip(fv_str)} | {_conc(inter_c)} |")
         # 工作液 (本 dg 串行稀释): 目标 = 母液×移取/定容
@@ -244,7 +254,7 @@ def _work_flow_rows_multi(grp, unit, analytes=None, cu="mg/L"):
                         f"{_strip(s.get('pip_vessel'))} | {_strip(s.get('flask_vessel'))} | {_conc(tgt)} |")
     if not rows:
         return []
-    return [f"| 母液浓度（{cu}） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（{cu}） |",
+    return [_hdr_m,
             "|---|---|---|---|---|"] + rows
 
 
@@ -252,12 +262,14 @@ def _solid_inter_work_rows(grp, group_analytes, cu="mg/L"):
     """固体多目标物 4.3.2 稀释流程表 (逐物质多行, 镜像前端「固体组中间液」表):
     中间液每个目标物一行 — 母液浓度=m_std(g)·纯度·1e6/储备液容量瓶(mL), 移取体积/移取量器按各目标物;
     定容量器、目标浓度合并(首行填值, 余行留空) — 目标浓度=各目标物 母液浓度×移取体积/容量瓶 各自修约后取均值。
-    cu: 样液浓度单位 — 储备液公式产出 mg/L, ×k 换算; 链上浓度录入单位直通。无有效中间液移取 → []."""
+    cu: 样液浓度单位 — 储备液公式恒 mg/L(断点在储备液→中间液); 链上浓度录入单位直通。无有效中间液移取 → []."""
     inter = grp.get("inter") or {}
     feeds = inter.get("feeds") or {}
     flasks = inter.get("flasks") or {}
     work = grp.get("work") or {}
-    _kk = 10 ** (-CIN_UNIT_EXP.get(cu, 0))       # mg/L(公式空间) → 录入单位显示换算
+    _hdr = (f"| 母液浓度（储备液 mg/L；工作液 {cu}） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（{cu}） |"
+            if cu != "mg/L" else
+            "| 母液浓度（mg/L） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（mg/L） |")
 
     def _strip(s):
         s = str(s or "").split("(")[0].strip()
@@ -288,7 +300,7 @@ def _solid_inter_work_rows(grp, group_analytes, cu="mg/L"):
         fd_list = fd_raw if isinstance(fd_raw, list) else ([fd_raw] if fd_raw else [])
         m, p, sf = a.get("m_std_g"), a.get("purity"), a.get("stock_flask")
         sf_nom = _nominal(sf)
-        stock = (float(m) * float(p) * 1e6 / sf_nom * _kk) if (m and p and sf_nom) else None
+        stock = (float(m) * float(p) * 1e6 / sf_nom) if (m and p and sf_nom) else None   # 储备液恒 mg/L
         for fd in fd_list:
             if not (fd and fd.get("pip_vol")):
                 continue
@@ -326,7 +338,7 @@ def _solid_inter_work_rows(grp, group_analytes, cu="mg/L"):
                         f"{_strip(s.get('pip_vessel'))} | {_strip(s.get('flask_vessel'))} | {_conc_fmt(tgt)} |")
     if not rows:
         return []
-    return [f"| 母液浓度（{cu}） | 移取体积<br>（mL） | 移取量器 | 定容量器 | 目标浓度（{cu}） |",
+    return [_hdr,
             "|---|---|---|---|---|"] + rows
 
 

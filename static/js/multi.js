@@ -744,17 +744,18 @@ function liquidFolds(parent, meta) {
   wrap.appendChild(addBar); parent.appendChild(wrap);
 }
 
-// 固体目标物储备液(母液)浓度 (mg/L) = m_std(g)·纯度·1e6 / 储备液容量瓶(mL); 取自拓扑行 (单物质 solidStockConc 同源)
+// 固体目标物储备液(母液)浓度 (mg/L) = m_std(g)·纯度·1e6 / 储备液容量瓶(mL); 取自拓扑行 (单物质 solidStockConc 同源)。
+// 储备液恒 mg/L (与证书同量级); 断点在储备液→中间液: 中间液目标起为①所选样液单位 (见 interAvgTargetConc ×muK)。
 function solidStockConcMg(groupName, analyteName) {
   const r = S().topo_rows.find(r => r.类型 === "固体"
     && (r.分组名 || "").trim() === (groupName || "").trim()
     && (r.目标物 || "").trim() === (analyteName || "").trim());
   if (!r) return null;
   const m = Number(r["m_std(g)"]), p = Number(r["纯度p"]), fv = parseVesselNominal(r["储备液容量瓶(mL)"]);
-  return (m > 0 && p > 0 && fv > 0) ? (m * p * 1e6 / fv * muK()) : null;   // mg/L 公式 ×muK() → ①所选样液单位
+  return (m > 0 && p > 0 && fv > 0) ? (m * p * 1e6 / fv) : null;
 }
 
-// 固体组中间液混合后各物质目标浓度均值 (mg/L, 显示串) = 各源 母液浓度×移取体积/容量瓶 修约后取均值。
+// 固体组中间液混合后各物质目标浓度均值 = 各源 储备液(mg/L)×移取体积/容量瓶 → 换算①所选样液单位后修约取均值。
 // 混合中间液各物质浓度各异 → 取均值作工作液稀释链首行母液浓度的默认值 (用户可改)。
 function interAvgTargetConc(dg, sources, feeds, flasks, dgPrefix) {
   const fNom = parseVesselNominal(flasks[dg]);
@@ -764,7 +765,7 @@ function interAvgTargetConc(dg, sources, feeds, flasks, dgPrefix) {
     .map(fd => {
       const stock = solidStockConcMg(dgPrefix, src);
       const p = Number(fd.pip_vol);
-      return (stock != null && isFinite(p) && p > 0) ? concRound(stock * p / fNom) : null;
+      return (stock != null && isFinite(p) && p > 0) ? concRound(stock * p / fNom * muK()) : null;   // mg/L → 所选单位
     }))
     .filter(v => v != null && isFinite(v));
   return vals.length ? concAvgFmt(vals) : null;
@@ -792,9 +793,9 @@ function renderPrepFold(parent, meta, title, feeds, flasks, work, sources, dgPre
     const tbl = el("table", "grid");
     const thead = el("thead"); const trh = el("tr");
     const heads = ["源", direct ? "点位" : "中间液分组"];
-    if (isSolid) heads.push(`母液浓度 (${muCu()})`);
+    if (isSolid) heads.push("母液浓度 (mg/L)");   // 储备液恒 mg/L; 断点在中间液
     heads.push("移液量器", "移取体积 (mL)", direct ? "点位容量瓶" : "中间液容量瓶");
-    if (isSolid) heads.push(`目标浓度 (${muCu()})`);
+    if (isSolid) heads.push(`目标浓度 (${muCu()})`);   // 中间液目标 = 所选样液浓度单位
     heads.push("");
     heads.forEach(t => { const th = el("th"); th.textContent = t; trh.appendChild(th); });
     thead.appendChild(trh); tbl.appendChild(thead);

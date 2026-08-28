@@ -427,7 +427,7 @@ function workGridCfg(meta) {
   const liquid = sc.stock_source === "liquid_dilute"; // 高浓液标: 首行母液浓度 = 证书浓度(自动算)
   return {
     columns: [
-      { key: "母液浓度(mg/L)", type: "text", label: `母液浓度(${cuOf()})`,   // key 为存储标识恒不改, label 跟随单位
+      { key: "母液浓度(mg/L)", type: "text", label: `母液浓度(${serial ? "储备mg/L·" + cuOf() : "mg/L"})`,   // key 为存储标识恒不改; 逐级: 首行=储备液(mg/L) 其余=中间液(所选单位); 非逐级: 全行=储备液(mg/L)
         editable: r => { const i = S().editors.work_df.indexOf(r);
           if (i === 0 && (solid || liquid)) return false;   // 纯品/液标: 首行=储备液或证书浓度, 只读
           return serial ? i === 0 : true; },               // 逐级稀释仅首行可编; 非逐级全可编
@@ -442,7 +442,13 @@ function workGridCfg(meta) {
       { key: "移取体积(mL)", type: "number", label: "移取体积(mL)", step: "any",
         onSet: r => { const s = volStr(r["移取体积(mL)"]); if (s != null) r["移取体积(mL)"] = s; } },
       { key: "定容量器", type: "select", label: "定容量器", options: meta.makeup_opts, seed: WORK_FLASK_DEFAULT },
-      { key: "目标浓度(mg/L)", label: `目标浓度(${cuOf()})`, computed: r => targetStr(r["母液浓度(mg/L)"], r["移取体积(mL)"], parseVesselNominal(r["定容量器"])) },
+      { key: "目标浓度(mg/L)", label: `目标浓度(${cuOf()})`, computed: r => {
+          const t = targetStr(r["母液浓度(mg/L)"], r["移取体积(mL)"], parseVesselNominal(r["定容量器"]));
+          if (t == null) return null;
+          const k = cuK();
+          const fromStock = serial ? S().editors.work_df.indexOf(r) === 0 : true;   // 母液=储备液(mg/L) → 目标换算所选单位
+          return (fromStock && k !== 1) ? concStr(Number(t) * k) : t;   // k=1 (mg/L/µg/mL) 保持原串不动
+        } },
     ],
     rows: S().editors.work_df, dynamic: true, ctx: S(),
     noteId: "work-note",
@@ -461,7 +467,8 @@ function updateWorkNote(rows) {
     if (isFinite(vol) && fnom && vol > fnom + 1e-9)
       warns.push(`行${i + 1}: 移取体积 ${vol} 超过 定容量器(${fnom}mL)`);
   });
-  n.textContent = warns.length ? "⚠ " + warns.join("；") : "";
+  const hint = cuOf() !== "mg/L" ? `浓度单位： 首行(储备液)为 mg/L；中间液及以下/曲线浓度为 ${cuOf()}` : "";
+  n.textContent = [hint, warns.length ? "⚠ " + warns.join("；") : ""].filter(Boolean).join("　");
   n.style.color = warns.length ? "#c00" : "";
 }
 function targetStr(c, v, fnom) {
@@ -474,21 +481,21 @@ function targetStr(c, v, fnom) {
   }
   return concStr(val);
 }
-// 纯品称量储备液浓度 = m_std(g)·purity·1e6 / 储备液容量瓶(mL) → mg/L, ×cuK() 换算为①所选样液浓度单位
-// (链首锚点即录入单位空间, 后续 targetStr 纯比例计算自动一致)
+// 纯品称量储备液浓度 = m_std(g)·purity·1e6 / 储备液容量瓶(mL) → mg/L。
+// 储备液恒 mg/L (与证书同量级); 断点在储备液→中间液: 链首目标起为①所选样液浓度单位 (见 workGridCfg 目标列 ×cuK)。
 function solidStockConc() {
   const s = S().scalars;
   const m = Number(s.m_std), p = Number(s.purity), v = Number(s.stock_flask_s);
-  return (m > 0 && p > 0 && v > 0) ? concStr(m * p * 1e6 / v * cuK()) : null;
+  return (m > 0 && p > 0 && v > 0) ? concStr(m * p * 1e6 / v) : null;
 }
-// 高浓液标储备液浓度 = 证书浓度(按证书单位归一 mg/L, 数值可能不变) × 移取体积 / 储备液容量瓶 → mg/L, ×cuK() 换算为样液单位
+// 高浓液标储备液浓度 = 证书浓度(按证书单位归一 mg/L) × 移取体积 / 储备液容量瓶 → mg/L (恒 mg/L, 同上)
 function liquidStockConc() {
   const s = S().scalars;
   const exp = ((S().meta || {}).conc_unit_exp || {})[s.C_cert_unit || "mg/L"] ?? 0;
   const cMgL = Number(s.C_cert) * Math.pow(10, exp);
   const pv = Number(s.pip_vol_actual);
   const fv = Number(s.stock_flask_s);
-  return (cMgL > 0 && pv > 0 && fv > 0) ? concStr(cMgL * pv / fv * cuK()) : null;
+  return (cMgL > 0 && pv > 0 && fv > 0) ? concStr(cMgL * pv / fv) : null;
 }
 
 // ---- LIMS 工作液溯源 ----
