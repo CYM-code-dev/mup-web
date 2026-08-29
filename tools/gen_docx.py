@@ -192,6 +192,13 @@ def _fmt_table_cells(t):
                 p.alignment = WD_ALIGN_PARAGRAPH.CENTER   # 水平居中
 
 
+def _cells_flat(t):
+    """t.cell(r,c) 等价快照: python-docx 每次 cell() 都全表重扫 gridSpan/vMerge (O(表²)),
+    124 目标物大表生成要 4 分钟+; 取一次 row-major 平面列表, 索引 [r*len(t.columns)+c]。
+    仅在同表后续 vMerge 改写前向读取场景下安全 (本模块各 helper 均是)。"""
+    return t._cells
+
+
 def _compact_table(t, first_cm=None):
     """宽表: 固定列宽(首列加宽放化合物名) + 8pt 字号; 首列默认2.6cm, first_cm 覆盖
     (多目标物4.4 拟合表6列长名多→4.8cm)。其余列按内容加权填满 A4 纵向 usable=14.66cm。"""
@@ -217,7 +224,8 @@ def _compact_table(t, first_cm=None):
     usable = Cm(14.66)
     def _wt(s):
         return sum(2 if ord(c) > 0x2e80 else 1 for c in (s or ""))
-    dw = [max(4, max((_wt(t.cell(r, c).text) for r in range(len(t.rows))), default=1))
+    grid = _cells_flat(t)
+    dw = [max(4, max((_wt(grid[r * cols + c].text) for r in range(len(t.rows))), default=1))
           for c in range(1, cols)]   # 权重下限 4: 同类短值列(如 16.0→"16")不致过窄, 保持齐整
     sw = sum(dw) or 1
     widths = [first_w] + [int(round((usable - first_w) * w / sw)) for w in dw]
@@ -322,8 +330,10 @@ def _vmerge(t, r1, r2, col=0):
     """纵向合并 t.cell(r1..r2, col): 首格 vMerge=restart 保留文字, 续格 vMerge=continue
     (Word/WPS 只显示首格文字)。"""
     from docx.oxml import OxmlElement
+    ncols = len(t.columns)
+    grid = _cells_flat(t)
     for r in range(r1, r2 + 1):
-        tcPr = t.cell(r, col)._tc.get_or_add_tcPr()
+        tcPr = grid[r * ncols + col]._tc.get_or_add_tcPr()
         for old in tcPr.findall(qn("w:vMerge")):
             tcPr.remove(old)
         vm = OxmlElement("w:vMerge")
@@ -335,11 +345,15 @@ def _vmerge(t, r1, r2, col=0):
 def _merge_first_col_repeats(t):
     """首列连续相同值纵向合并 (如标曲表分析物名跨"浓度/峰面积"两行)。表头(row 0)不参与。"""
     n = len(t.rows)
+    ncols = len(t.columns)
+    grid = _cells_flat(t)
+    def _txt(r):
+        return grid[r * ncols].text.strip()
     i = 1
     while i < n:
-        val = t.cell(i, 0).text.strip()
+        val = _txt(i)
         j = i + 1
-        while j < n and val and t.cell(j, 0).text.strip() == val:
+        while j < n and val and _txt(j) == val:
             j += 1
         if j > i + 1:
             _vmerge(t, i, j - 1)
@@ -351,12 +365,13 @@ def _merge_blank_trailing(t):
     稀释流程表固体逐物质多行: 定容量器/目标浓度 首行有值、其余物质行留空 → 合并。表头(row 0)不参与。"""
     n = len(t.rows)
     ncols = len(t.columns)
+    grid = _cells_flat(t)
     for col in range(ncols):
         i = 1
         while i < n:
-            if t.cell(i, col).text.strip():
+            if grid[i * ncols + col].text.strip():
                 j = i + 1
-                while j < n and not t.cell(j, col).text.strip():
+                while j < n and not grid[j * ncols + col].text.strip():
                     j += 1
                 if j > i + 1:
                     _vmerge(t, i, j - 1, col)
@@ -433,9 +448,10 @@ def md_to_docx(md_text, prep_flow=None, header=None, multi=False):
                 cols = len(tbl[0])
                 t = doc.add_table(rows=len(tbl), cols=cols)
                 t.style = "Table Grid"
+                grid = _cells_flat(t)
                 for r, row in enumerate(tbl):
                     for c in range(cols):
-                        cell = t.cell(r, c)
+                        cell = grid[r * cols + c]
                         _add_inline(cell.paragraphs[0], row[c] if c < len(row) else "")
                 _fmt_table_cells(t)            # 所有表格: 居中 + 删首行缩进"空格" + 不换行
                 if cols >= 7:
