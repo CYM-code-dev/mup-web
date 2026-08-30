@@ -180,6 +180,9 @@ function renderT2(meta) {
       { label: "试剂名称", el: cellInput("makeup_solvent_val") },
       { label: "膨胀系数 α", el: cellInput("alpha_val", "number") },
     ]));
+    if (["pip_g", "cylinder"].includes(S().scalars.mu_vessel_kind)) {
+      bindInput(branch, "实际定容体积 V (mL)", "mu_vuv", { type: "number" });
+    }
   }
   card.appendChild(branch); c.appendChild(card);
   updateBlendVsumNote();

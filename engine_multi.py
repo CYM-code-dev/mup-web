@@ -130,6 +130,7 @@ def _build_params(method, group, a):
         "balance_tol": method["balance_tol"], "m_sample": method["m_sample"],
         "n_weighings": method["n_weighings"],
         "vessel_kind": method["vessel_kind"], "vessel_volume": method["vessel_volume"],
+        "vessel_used_volume": method.get("vessel_used_volume", method["vessel_volume"]),   # 分度吸量管/量筒实际定容体积 (mup_cg248 用)
         "alpha": method.get("alpha", 1.19e-3),
         "dtau": method.get("dtau", 5.0),
         "points": a["points"], "p": a["p"], "x_pred": a["x_pred"],
@@ -273,7 +274,8 @@ def _method_from_scalars(scalars, mu_rows=None):
         vessel_kind = S("mu_vessel_kind")
         vvs = S("mu_vessel_vol_sel")
         vessel_volume = int(vvs) if vvs not in (None, _MISSING) else None
-        vessel_used_volume = vessel_volume
+        # 分度吸量管/量筒非满刻度: 实际定容体积可手填 (镜像 engine_single:291)
+        vessel_used_volume = (float(_mvu) if vessel_kind in ("pip_g", "cylinder") and isinstance(_mvu := S("mu_vuv", None), (int, float)) else vessel_volume)
         makeup_solvent = S("makeup_solvent_val", "")
         alpha = float(S("alpha_val", DEF["alpha"]))
 
