@@ -703,8 +703,8 @@ function recompSpike() {
   const F = Number(s.dil_factor) || 1;
   const c0 = (s.spike_std_conc && s.spike_add_vol && s.spike_vol) ? s.spike_std_conc * s.spike_add_vol * 1e-3 / s.spike_vol / F : 0;   // 录入单位空间, ÷稀释因子 → 实测溶液空间的理论加标 C₀
   const c0m = c0 * 10 ** cexp;                     // 归一 mg/L (规范修约空间)
-  // spike_theor: 先在 mg/L 空间规范修约(与历史值逐位一致), 再换回录入单位; 外层 roundC 清 ×1000 浮点噪声
-  if (s.spike_std_conc != null) s.spike_theor = roundC(roundC(c0m) * 10 ** -cexp);
+  // spike_theor: 录入单位空间直接修约 (roundC: <0.1→3位/否则2位); mg/L 场景与旧 mg/L 空间修约逐位一致, ng/mL 不再塌成整数
+  if (s.spike_std_conc != null) s.spike_theor = roundC(c0);
   // 结果修约 (同 测定值 w): 有效数字→round_sf / 小数位数→round_dp, 位数 nd; 随 §1 修约设置变化
   const exp = meta().unit_exp[s.unit] ?? 0;
   const rnd = s.round_mode === "有效数字" ? round_sf : round_dp;
