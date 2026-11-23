@@ -66,11 +66,14 @@ const CONC_UNIT_PAIR = { "mg/L": "mg/kg", "µg/mL": "mg/kg", "ng/mL": "µg/g" };
 // 样液浓度单位工具: cuOf() 当前单位串; cuK() 显示换算 (mg/L公式空间→录入单位; ng/mL→×1000; µg/mL≡mg/L→1)
 function cuOf() { return S().scalars.conc_unit || "mg/L"; }
 function cuK() { const e = ((S().meta || {}).cin_unit_exp || {})[cuOf()] ?? 0; return 10 ** -e; }
-function updateModelTip() {   // 侧栏测量模型 tooltip: C 单位跟随①所选样液浓度单位 (覆盖 index.html 静态串); F≠1 时附 F
+function updateModelTip() {   // 侧栏测量模型: 公式+tooltip 跟随① (C 单位/稀释因子, 覆盖 index.html 静态串); F=1 不体现
   const t = document.getElementById("meta-model");
   const F = Number(S().scalars.dil_factor) || 1;
   const fs = F !== 1 ? `；F—稀释因子(${F})` : "";
-  if (t) t.title = `式中：w—含量；C—样液浓度(${cuOf()})；V—定容体积(mL)${fs}；m—称样量(g)`;
+  if (t) {
+    t.innerHTML = `测量模型：<b>w = C·V${F !== 1 ? "·F" : ""}/m</b>`;
+    t.title = `式中：w—含量；C—样液浓度(${cuOf()})；V—定容体积(mL)${fs}；m—称样量(g)`;
+  }
 }
 function renderT1() {
   const c = document.getElementById("t1"); c.innerHTML = "";
