@@ -186,9 +186,10 @@ def _build_params(method, group, a):
 
 
 # ---- 逐字移植 app.py:3173-3186 ----
-def _derive_spike_rw(spike_C, spike_m, V, exp, c0, round_mode="有效数字", nd=3):
+def _derive_spike_rw(spike_C, spike_m, V, exp, c0, round_mode="有效数字", nd=3, F=1.0):
     """加标原始 C(已归一 mg/L)/m(g) + 方法定容 V + 单位 exp + 理论加标 C₀(mg/L) → (测定值列表, 回收率列表)。
-    调用方负责把录入单位(mg/L/ng/mL)的 C 先归一为 mg/L 再传入 (ng/mL→×10⁻³, 见 CIN_UNIT_EXP)。"""
+    调用方负责把录入单位(mg/L/ng/mL)的 C 先归一为 mg/L 再传入 (ng/mL→×10⁻³, 见 CIN_UNIT_EXP)。
+    F=稀释因子, 只乘测定值 (回收率不含)。"""
     if not c0 or not V or exp is None:
         return [], []
     rnd = round_sf if round_mode == "有效数字" else round_dp
@@ -196,7 +197,7 @@ def _derive_spike_rw(spike_C, spike_m, V, exp, c0, round_mode="有效数字", nd
     for c, m in zip(spike_C, spike_m):
         if c is None or not m or m <= 0:
             continue
-        det.append(rnd(c * V / m * 10 ** exp, nd))
+        det.append(rnd(c * V / m * 10 ** exp * F, nd))
         rec.append(round_sf(c / c0, 3))
     return det, rec
 
@@ -296,6 +297,7 @@ def _method_from_scalars(scalars, mu_rows=None):
         "vessel_used_volume": vessel_used_volume, "vessel_tol": vessel_tol,
         "reagents": reagents,
         "makeup_solvent": makeup_solvent, "alpha": alpha,
+        "dil_factor": float(S("mu_dil_factor", 1) or 1),      # 稀释因子: 只乘结果 w
         "dtau": S("mu_dtau", DEF["dtau"]), "env_temp": S("mu_env_temp", DEF.get("env_temp", 20.0)),
         "prep_flow": S("mu_prep_flow", ""), "influences": sc.get("mu_influences"),
     }
@@ -458,11 +460,18 @@ def build_params_multi(state):
     _cexp = CIN_UNIT_EXP.get(method.get("conc_unit", "mg/L"), 0)   # ⑥加标C/曲线浓度/标液浓度 → mg/L 指数
     _rm = method.get("round_mode", "有效数字")
     _nd = int(method.get("round_nd", 3))
+    _F = float(method.get("dil_factor", 1) or 1)              # 稀释因子: 只乘结果 w
+    _frnd = round_sf if _rm == "有效数字" else round_dp
     for a in analytes:
         m = meas.get(a["name"])
         if m:
             for k in ("X", "p", "x_pred", "points", "replicates", "recovery"):
                 a[k] = m[k]
+            if _F != 1:                                       # 旧格式 Excel 显式 测定值/X: 乘 F (新格式在 _derive_spike_rw 内乘)
+                if a["X"] is not None:
+                    a["X"] = _frnd(a["X"] * _F, _nd)
+                if a["replicates"]:
+                    a["replicates"] = [_frnd(v * _F, _nd) for v in a["replicates"]]
             if a.get("points"):                                # 曲线点按样液所选单位录入 → 归一 mg/L (fit 与 x_pred 同空间)
                 a["points"] = [(float(x) * 10 ** _cexp, y) for x, y in a["points"]]   # float(): 兼容旧草稿字符串 x
             if "analyte_areas" in m:              # 内标法原始 分析物/内标 峰面积 (报告表5分行显示)
@@ -480,7 +489,7 @@ def build_params_multi(state):
                     c0 = c_std * 10 ** _cexp * v_add * 1e-3 / _V   # 标液浓度同录入单位 → 归一 mg/L 后算 C₀
                     _c_eff = [c * 10 ** _cexp for c in m["spike_C"]]   # 归一 mg/L 后传入 (函数保持逐字移植不动)
                     a["replicates"], a["recovery"] = _derive_spike_rw(
-                        _c_eff, m["spike_m"], _V, _exp, c0, _rm, _nd)
+                        _c_eff, m["spike_m"], _V, _exp, c0, _rm, _nd, _F)
                     _ms = method.get("m_sample")
                     if _ms and not _is_na(_ms) and _ms > 0:
                         _rnd_fn = round_sf if _rm == "有效数字" else round_dp

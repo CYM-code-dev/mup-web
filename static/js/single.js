@@ -66,9 +66,11 @@ const CONC_UNIT_PAIR = { "mg/L": "mg/kg", "µg/mL": "mg/kg", "ng/mL": "µg/g" };
 // 样液浓度单位工具: cuOf() 当前单位串; cuK() 显示换算 (mg/L公式空间→录入单位; ng/mL→×1000; µg/mL≡mg/L→1)
 function cuOf() { return S().scalars.conc_unit || "mg/L"; }
 function cuK() { const e = ((S().meta || {}).cin_unit_exp || {})[cuOf()] ?? 0; return 10 ** -e; }
-function updateModelTip() {   // 侧栏测量模型 tooltip: C 单位跟随①所选样液浓度单位 (覆盖 index.html 静态串)
+function updateModelTip() {   // 侧栏测量模型 tooltip: C 单位跟随①所选样液浓度单位 (覆盖 index.html 静态串); F≠1 时附 F
   const t = document.getElementById("meta-model");
-  if (t) t.title = `式中：w—含量；C—样液浓度(${cuOf()})；V—定容体积(mL)；m—称样量(g)`;
+  const F = Number(S().scalars.dil_factor) || 1;
+  const fs = F !== 1 ? `；F—稀释因子(${F})` : "";
+  if (t) t.title = `式中：w—含量；C—样液浓度(${cuOf()})；V—定容体积(mL)${fs}；m—称样量(g)`;
 }
 function renderT1() {
   const c = document.getElementById("t1"); c.innerHTML = "";
@@ -93,6 +95,7 @@ function renderT1() {
   const ug2 = el("div", "grid-2");  // 第二行: 结果修约方式 | 位数
   bindSelect(ug2, "结果修约方式", "round_mode", [{ value: "有效数字", label: "有效数字" }, { value: "小数位数", label: "小数位数" }], { on: recompSpike });
   bindInput(ug2, "位数", "round_nd", { type: "number", attrs: { step: 1, min: 0 }, on: recompSpike });
+  bindInput(ug2, "稀释因子 F", "dil_factor", { type: "number", attrs: { step: "any", min: 0 }, on: () => { recompSpike(); updateModelTip(); } });   // W=C·V·F/m, 默认 1; F=1 时报告公式不体现
   u.appendChild(ug); u.appendChild(ug2);
   const uh = el("small", "muted"); uh.textContent = "位数比标准规定多一位（AI 识别标准时已自动 +1）"; u.appendChild(uh);
 
@@ -200,7 +203,7 @@ function reagCols(prefix, meta) {
   const onSolvent = (r) => { const sol = meta.solvents.find(x => x.name_cn === r.s); if (sol) r.a = sol.alpha; };
   const syncVol = (r) => { if (FLASK_LIKE(r.k) && r.v != null && r.v !== "") r.vi = Number(r.v); };
   const cols = [
-    { key: "s", type: "select", label: "试剂名称", options: [...meta.solvents.map(s => s.name_cn), "自定义"], onSet: onSolvent },
+    { key: "s", label: "试剂名称", options: () => meta.solvents.map(s => s.name_cn), onSet: onSolvent },   // 非select+函数options=datalist 文本框: 下拉预设或手输自定义名
     { key: "vi", type: "number", label: "体积 (mL)", step: "any", readOnly: (r) => FLASK_LIKE(r.k) },
     { key: "a", type: "number", label: "膨胀系数 α", step: "any" },
   ];
@@ -638,13 +641,13 @@ function renderT5(meta) {
   c.appendChild(infl);
   const card = el("div", "card"); card.append(cardTitle("精密度 & 回收率"));
   const g = el("div", "grid-5");
-  bindInput(g, `标液浓度 (${cuOf()})`, "spike_std_conc", { type: "number", on: recompSpike });
-  bindInput(g, "加标体积 (μL)", "spike_add_vol", { type: "number", on: recompSpike });
-  const volInp = bindInput(g, "定容体积 V (mL)", "spike_vol", { type: "number", on: recompSpike });
+  bindInput(g, `标液浓度 (${cuOf()})`, "spike_std_conc", { type: "number", attrs: { step: "any" }, on: recompSpike });
+  bindInput(g, "加标体积 (μL)", "spike_add_vol", { type: "number", attrs: { step: "any" }, on: recompSpike });
+  const volInp = bindInput(g, "定容体积 V (mL)", "spike_vol", { type: "number", attrs: { step: "any" }, on: recompSpike });
   volInp.id = "in-spike-vol";
-  const theorInp = bindInput(g, `理论加标 C₀ (${cuOf()})`, "spike_theor", { type: "number" });
+  const theorInp = bindInput(g, `理论加标 C₀ (${cuOf()})`, "spike_theor", { type: "number", attrs: { step: "any" } });
   theorInp.id = "in-spike-theor";
-  const massInp = bindInput(g, `理论目标物含量 (${S().scalars.unit})`, "spike_add_mass", { type: "number" });
+  const massInp = bindInput(g, `理论目标物含量 (${S().scalars.unit})`, "spike_add_mass", { type: "number", attrs: { step: "any" } });
   massInp.id = "in-spike-mass";
   card.appendChild(g);
   c.appendChild(card);
@@ -658,12 +661,13 @@ function spikeGridCfg(meta) {
   const cu = S().scalars.conc_unit || "mg/L";
   const rm = S().scalars.round_mode; const nd = Number(S().scalars.round_nd);
   const rnd = rm === "有效数字" ? round_sf : round_dp;
+  const F = Number(S().scalars.dil_factor) || 1;   // 稀释因子只乘测定值 w (C₀/理论含量/回收率不含 F)
   return {
     columns: [
       { key: "实测加标 C (mg/L)", type: "number", label: `实测加标 C (${cu})`, step: "any" },   // key 为存储标识恒不改, 仅 label 跟随单位
       { key: "称样量 m (g)", type: "number", label: "称样量 m (g)", step: 0.0001 },
       { key: "回收率 R", label: "回收率 R", computed: r => (r["实测加标 C (mg/L)"] != null && S().scalars.spike_theor) ? round_sf(r["实测加标 C (mg/L)"] / S().scalars.spike_theor, 3) : null, format: v => resultStr(v, "有效数字", 3) },   // C 与 spike_theor 同为录入单位 → 同空间直除
-      { key: "测定值 w", label: "测定值 w", computed: r => { const c = r["实测加标 C (mg/L)"], m = r["称样量 m (g)"]; return (c != null && m > 0) ? rnd(c * 10 ** cexp * S().scalars.spike_vol / m * 10 ** exp, nd) : null; }, format: v => resultStr(v, rm, nd) },
+      { key: "测定值 w", label: "测定值 w", computed: r => { const c = r["实测加标 C (mg/L)"], m = r["称样量 m (g)"]; return (c != null && m > 0) ? rnd(c * 10 ** cexp * S().scalars.spike_vol / m * 10 ** exp * F, nd) : null; }, format: v => resultStr(v, rm, nd) },
     ],
     rows: S().editors.spike_df, dynamic: true, ctx: S(),
   };

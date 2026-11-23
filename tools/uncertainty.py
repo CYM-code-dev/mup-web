@@ -430,6 +430,8 @@ BASELINE_PARAMS = {
     "spike_C": list(MUP_SPIKE_C), "spike_m": list(MUP_SPIKE_M),
     # 结果值 X 的修约: 方式(有效数字/小数位数) + 位数; 取舍=四舍六入五成双。
     "round_mode": "有效数字", "round_nd": 3,
+    # 稀释因子 F: W=C·V·F/m, 只乘结果 w (replicates/X), 无不确定度分量; 默认 1 (F=1 时报告公式不体现)
+    "dil_factor": 1.0,
 }
 
 

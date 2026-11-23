@@ -677,10 +677,12 @@ def _stock_liquid_dilute_detail(method, r, analyte, sec="4.3.1", cert_variants=N
 _UNIT_EXP = {"mg/kg": 0, "µg/kg": 3, "g/kg": -3, "µg/g": 0, "%": -4}
 
 
-def _model_latex(unit, conc_unit="mg/L"):
-    """测量模型 LaTeX: 基准 w=C·V/m; 合成指数 = 结果单位 exp + 样液浓度归一 exp (非 0 时附 ×10^n)。
+def _model_latex(unit, conc_unit="mg/L", F=1):
+    """测量模型 LaTeX: 基准 w=C·V/m (F≠1 时附 ·F); 合成指数 = 结果单位 exp + 样液浓度归一 exp (非 0 时附 ×10^n)。
     ng/mL+µg/g → ×10⁻³; ng/mL+µg/kg → 无因子 (1 ng/g ≡ 1 µg/kg, 量纲严格成立)。"""
     base = r"w = \frac{C \cdot V}{m}"
+    if F != 1:
+        base += r" \cdot F"                                   # 稀释因子: 仅 F≠1 时体现
     e = _UNIT_EXP.get(unit, 0) + CIN_UNIT_EXP.get(conc_unit, 0)
     return base if e == 0 else base + rf" \times 10^{{{e}}}"
 
@@ -901,12 +903,18 @@ def _sec2_model(method, r, analyte_label):
     matrix = method.get("matrix", "（基质）")
     unit = method.get("unit", "mg/kg")
     conc_unit = method.get("conc_unit", "mg/L")
+    try:
+        F = float(method.get("dil_factor", 1) or 1)
+    except (TypeError, ValueError):
+        F = 1.0
     L = []; A = L.append
     A("## 2 测量模型\n")
-    A(f"$$ {_model_latex(unit, conc_unit)} $$")
+    A(f"$$ {_model_latex(unit, conc_unit, F)} $$")
     A(f"式中：w—{matrix}中{analyte_label}含量({unit})；")
     A(f"　　　C—样液浓度({conc_unit})；")
     A("　　　V—定容体积(mL)；")
+    if F != 1:
+        A("　　　F—稀释因子；")
     A("　　　m—称样量(g)。")
     A("从测量模型可看出，各影响参数相互独立，且由于数学模型是积和商的模型，合成标准不确定度可用相对标准不确定度进行合成。")
     A("")

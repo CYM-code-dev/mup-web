@@ -67,9 +67,11 @@ const CONC_UNIT_PAIR = { "mg/L": "mg/kg", "µg/mL": "mg/kg", "ng/mL": "µg/g" };
 // 样液浓度单位工具: muCu() 当前单位串; muK() 显示换算 (mg/L公式空间→录入单位; ng/mL→×1000; µg/mL≡mg/L→1)
 function muCu() { return S().scalars.mu_conc_unit || "mg/L"; }
 function muK() { const e = ((S().meta || {}).cin_unit_exp || {})[muCu()] ?? 0; return 10 ** -e; }
-function updateModelTip() {   // 侧栏测量模型 tooltip: C 单位跟随①所选样液浓度单位 (覆盖 index.html 静态串)
+function updateModelTip() {   // 侧栏测量模型 tooltip: C 单位跟随①所选样液浓度单位 (覆盖 index.html 静态串); F≠1 时附 F
   const t = document.getElementById("meta-model");
-  if (t) t.title = `式中：w—含量；C—样液浓度(${S().scalars.mu_conc_unit || "mg/L"})；V—定容体积(mL)；m—称样量(g)`;
+  const F = Number(S().scalars.mu_dil_factor) || 1;
+  const fs = F !== 1 ? `；F—稀释因子(${F})` : "";
+  if (t) t.title = `式中：w—含量；C—样液浓度(${S().scalars.mu_conc_unit || "mg/L"})；V—定容体积(mL)${fs}；m—称样量(g)`;
 }
 function renderT1() {
   const c = document.getElementById("t1"); c.innerHTML = "";
@@ -95,6 +97,7 @@ function renderT1() {
   const ug2 = el("div", "grid-2");  // 第二行: 结果修约方式 | 位数
   bindSelect(ug2, "结果修约方式", "mu_round_mode", [{ value: "有效数字", label: "有效数字" }, { value: "小数位数", label: "小数位数" }]);
   bindInput(ug2, "位数", "mu_round_nd", { type: "number", attrs: { step: 1, min: 0 } });
+  bindInput(ug2, "稀释因子 F", "mu_dil_factor", { type: "number", attrs: { step: "any", min: 0 }, on: updateModelTip });   // W=C·V·F/m, 默认 1; F=1 时报告公式不体现
   u.appendChild(ug); u.appendChild(ug2);
   const uh = el("small", "muted"); uh.textContent = "位数比标准规定多一位（AI 识别标准时已自动 +1）"; u.appendChild(uh);
 
@@ -196,7 +199,7 @@ function muReagCols(prefix, meta) {
   const onSolvent = (r) => { const sol = meta.solvents.find(x => x.name_cn === r.s); if (sol) r.a = sol.alpha; };
   const syncVol = (r) => { if (FLASK_LIKE(r.k) && r.v != null && r.v !== "") r.vi = Number(r.v); };
   const cols = [
-    { key: "s", type: "select", label: "试剂名称", options: [...meta.solvents.map(s => s.name_cn), "自定义"], onSet: onSolvent },
+    { key: "s", label: "试剂名称", options: () => meta.solvents.map(s => s.name_cn), onSet: onSolvent },   // 非select+函数options=datalist 文本框: 下拉预设或手输自定义名
     { key: "vi", type: "number", label: "体积 (mL)", step: "any", readOnly: (r) => FLASK_LIKE(r.k) },
     { key: "a", type: "number", label: "膨胀系数 α", step: "any" },
   ];

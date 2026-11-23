@@ -249,6 +249,7 @@ def build_params_single(state):
     spike_vol = S("spike_vol")
     spike_theor = S("spike_theor")
     exp = UNIT_EXP[unit]
+    dil_factor = float(S("dil_factor") or 1)                  # 稀释因子: 只乘结果 w, 回收率/C₀/理论含量不含
     conc_unit = S("conc_unit") or "mg/L"                      # 样液浓度录入单位 (⑤ 实测加标C)
     cexp = CIN_UNIT_EXP.get(conc_unit, 0)                     # 归一到 mg/L 的指数
 
@@ -378,9 +379,9 @@ def build_params_single(state):
     x_pred = sum(c_vals) / len(c_vals) if c_vals else DEF["x_pred"]
     pairs = [(c * 10 ** cexp, m) for c, m in spike_rows if c is not None and m is not None and m > 0]
     if pairs:
-        replicates = [_rnd(c * spike_vol / m * 10 ** exp, nd) for c, m in pairs]
+        replicates = [_rnd(c * spike_vol / m * 10 ** exp * dil_factor, nd) for c, m in pairs]
         recovery = [round_sf(c / (spike_theor * 10 ** cexp), 3) if spike_theor else float("nan") for c, _ in pairs]   # spike_theor 录入单位 → 同归一 mg/L
-        X = _rnd(sum(c * spike_vol / m for c, m in pairs) / len(pairs) * 10 ** exp, nd)
+        X = _rnd(sum(c * spike_vol / m * dil_factor for c, m in pairs) / len(pairs) * 10 ** exp, nd)
     else:
         replicates, recovery, X = [], [], DEF["X"]
 
@@ -397,6 +398,7 @@ def build_params_single(state):
         "replicates": replicates, "recovery": recovery, "X": X,
         "curve_method": curve_method, "unit": unit, "conc_unit": conc_unit, "stock_source": stock_source,
         "spike_std_conc": spike_std_conc, "spike_add_vol": spike_add_vol, "spike_add_mass": spike_add_mass,
+        "dil_factor": dil_factor,
     }
     if makeup_mode == "mixed":
         params.update(makeup_mode="mixed", vessel_kind=vessel_kind,
