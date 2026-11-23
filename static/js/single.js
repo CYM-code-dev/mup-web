@@ -662,7 +662,7 @@ function spikeGridCfg(meta) {
   const cu = S().scalars.conc_unit || "mg/L";
   const rm = S().scalars.round_mode; const nd = Number(S().scalars.round_nd);
   const rnd = rm === "有效数字" ? round_sf : round_dp;
-  const F = Number(S().scalars.dil_factor) || 1;   // 稀释因子只乘测定值 w (C₀/理论含量/回收率不含 F)
+  const F = Number(S().scalars.dil_factor) || 1;   // 稀释因子: 测定值 w 乘 F; 回收率经 C₀÷F 同空间直除 (recompSpike); 理论含量为质量口径不含 F
   return {
     columns: [
       { key: "实测加标 C (mg/L)", type: "number", label: `实测加标 C (${cu})`, step: "any" },   // key 为存储标识恒不改, 仅 label 跟随单位
@@ -700,7 +700,8 @@ function syncSpikeVol() {
 function recompSpike() {
   const s = S().scalars;
   const cexp = (meta().cin_unit_exp || {})[s.conc_unit || "mg/L"] ?? 0;
-  const c0 = (s.spike_std_conc && s.spike_add_vol && s.spike_vol) ? s.spike_std_conc * s.spike_add_vol * 1e-3 / s.spike_vol : 0;   // 录入单位空间
+  const F = Number(s.dil_factor) || 1;
+  const c0 = (s.spike_std_conc && s.spike_add_vol && s.spike_vol) ? s.spike_std_conc * s.spike_add_vol * 1e-3 / s.spike_vol / F : 0;   // 录入单位空间, ÷稀释因子 → 实测溶液空间的理论加标 C₀
   const c0m = c0 * 10 ** cexp;                     // 归一 mg/L (规范修约空间)
   // spike_theor: 先在 mg/L 空间规范修约(与历史值逐位一致), 再换回录入单位; 外层 roundC 清 ×1000 浮点噪声
   if (s.spike_std_conc != null) s.spike_theor = roundC(roundC(c0m) * 10 ** -cexp);

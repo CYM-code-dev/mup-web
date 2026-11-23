@@ -486,7 +486,7 @@ def build_params_multi(state):
                 c_std, v_add = m.get("spike_std_conc"), m.get("spike_add_vol")
                 a["spike_std_conc"], a["spike_add_vol"] = c_std, v_add
                 if c_std and v_add and _V and _exp is not None:
-                    c0 = c_std * 10 ** _cexp * v_add * 1e-3 / _V   # 标液浓度同录入单位 → 归一 mg/L 后算 C₀
+                    c0 = c_std * 10 ** _cexp * v_add * 1e-3 / (_V * _F)   # 理论加标 C₀ 归一 mg/L 后折算到实测溶液空间 (÷稀释因子) → 回收率 = C/C₀ 同空间
                     _c_eff = [c * 10 ** _cexp for c in m["spike_C"]]   # 归一 mg/L 后传入 (函数保持逐字移植不动)
                     a["replicates"], a["recovery"] = _derive_spike_rw(
                         _c_eff, m["spike_m"], _V, _exp, c0, _rm, _nd, _F)
