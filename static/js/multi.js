@@ -96,10 +96,9 @@ function renderT1() {
   unitSel = bindSelect(ug, "结果单位", "mu_unit", meta().unit_options.map(x => ({ value: x, label: x })));
   const ug2 = el("div", "grid-2");  // 第二行: 结果修约方式 | 位数
   bindSelect(ug2, "结果修约方式", "mu_round_mode", [{ value: "有效数字", label: "有效数字" }, { value: "小数位数", label: "小数位数" }]);
-  bindInput(ug2, "位数", "mu_round_nd", { type: "number", attrs: { step: 1, min: 0 } });
+  bindInput(ug2, "位数（比标准规定多一位）", "mu_round_nd", { type: "number", attrs: { step: 1, min: 0 } });
   bindInput(ug2, "稀释因子 F", "mu_dil_factor", { type: "number", attrs: { step: "any", min: 0 }, on: updateModelTip });   // W=C·V·F/m, 默认 1; F=1 时报告公式不体现
   u.appendChild(ug); u.appendChild(ug2);
-  const uh = el("small", "muted"); uh.textContent = "位数比标准规定多一位（AI 识别标准时已自动 +1）"; u.appendChild(uh);
 
   const env = el("div", "card"); env.append(cardTitle("测量环境"));
   const eg = el("div", "grid-2");
