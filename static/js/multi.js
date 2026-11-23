@@ -1140,7 +1140,7 @@ function renderT5(meta) {
   bindInput(g, "每次测定进样次数", "mu_fr_inj", { type: "number", attrs: { min: 1, step: 1 } });
   card.appendChild(g);
   const note = el("small"); note.className = "muted";
-  note.textContent = "⑥ 加标数据走 Excel「精密度&回收率」表(每物多组平行样)。下载模板→填→上传,系统按 R=C/C₀、w=C·V/m 自动算。加标C/曲线浓度/标液浓度三列均按①所选样液浓度单位填写与生成列头。";
+  note.textContent = "⑥ 加标数据走 Excel「精密度&回收率」表(每物多组平行样)。下载模板→填→上传,系统按 R=C/C₀(C₀已按稀释因子F折算)、w=C·V·F/m 自动算。加标C/曲线浓度/标液浓度三列均按①所选样液浓度单位填写与生成列头。";
   card.appendChild(note);
   c.appendChild(card);
 }

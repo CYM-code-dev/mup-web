@@ -646,7 +646,7 @@ function renderT5(meta) {
   bindInput(g, "加标体积 (μL)", "spike_add_vol", { type: "number", attrs: { step: "any" }, on: recompSpike });
   const volInp = bindInput(g, "定容体积 V (mL)", "spike_vol", { type: "number", attrs: { step: "any" }, on: recompSpike });
   volInp.id = "in-spike-vol";
-  const theorInp = bindInput(g, `理论加标 C₀ (${cuOf()})`, "spike_theor", { type: "number", attrs: { step: "any" } });
+  const theorInp = bindInput(g, `理论加标 C₀ (${cuOf()})`, "spike_theor", { type: "number", attrs: { step: "any", title: "实测溶液空间的理论浓度 = 标液浓度×加标体积/定容体积/稀释因子F; 自动算, 可手改" } });
   theorInp.id = "in-spike-theor";
   const massInp = bindInput(g, `理论目标物含量 (${S().scalars.unit})`, "spike_add_mass", { type: "number", attrs: { step: "any" } });
   massInp.id = "in-spike-mass";
